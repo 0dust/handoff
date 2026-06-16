@@ -1,0 +1,6 @@
+{
+  "packet_id": "pkt_declined",
+  "status": "declined",
+  "decline_reason": "Not my project area today.",
+  "actor_member_id": "mem_alice"
+}

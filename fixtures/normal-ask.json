@@ -1,0 +1,72 @@
+{
+  "packet_id": "pkt_ask_normal",
+  "packet_type": "ask",
+  "workspace_id": "wrk_demo",
+  "sender_member_id": "mem_sam",
+  "recipient_member_ids": ["mem_alice"],
+  "created_at": "2026-06-15T12:00:00.000Z",
+  "updated_at": "2026-06-15T12:00:00.000Z",
+  "expires_at": "2026-06-16T12:00:00.000Z",
+  "status": "pending_sender_approval",
+  "project": {
+    "repo_name": "project-api",
+    "git_remote_fingerprint": "sha256:demo",
+    "branch": "main",
+    "commit_hash": "abc123"
+  },
+  "source_client": "codex",
+  "title": "Auth refresh test keeps failing",
+  "summary": "The auth refresh integration test fails after token rotation.",
+  "question": "Can you check why the auth refresh test keeps failing?",
+  "claims": [
+    {
+      "claim_id": "clm_1",
+      "text": "The failure happens after refresh token rotation.",
+      "confidence": "medium",
+      "status": "observed",
+      "evidence_ids": ["ev_1"],
+      "needs_recheck": true
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "ev_1",
+      "kind": "test_failure",
+      "label": "vitest failure",
+      "source": "pnpm test auth-refresh",
+      "excerpt": "expected 200, received 401 in auth refresh integration test",
+      "hash": "sha256:testfailure",
+      "captured_at": "2026-06-15T11:58:00.000Z",
+      "sensitivity": "normal"
+    }
+  ],
+  "files_or_symbols": ["src/auth/refresh.ts", "refreshSession"],
+  "commands_or_tests_run": ["pnpm test auth-refresh"],
+  "what_was_tried": ["Re-ran the failing integration test", "Checked token expiry math"],
+  "known_failures": ["Refresh token test returns 401"],
+  "current_hypothesis": "The rotated token is not persisted before the second request.",
+  "confidence": "medium",
+  "suggested_next_steps": ["Compare with Alice's local auth branch"],
+  "redaction_report": {
+    "blocked": false,
+    "findings": [],
+    "warnings": []
+  },
+  "hydration_policy": {
+    "requires_recipient_approval": true,
+    "requires_sender_approval_for_replies": true,
+    "allow_raw_transcript": false,
+    "max_characters": 8000
+  },
+  "audit_receipt": {
+    "receipt_id": "rcp_fixture",
+    "action": "draft",
+    "actor_member_id": "mem_sam",
+    "packet_id": "pkt_ask_normal",
+    "workspace_id": "wrk_demo",
+    "created_at": "2026-06-15T12:00:00.000Z",
+    "metadata": {
+      "source_client": "codex"
+    }
+  }
+}

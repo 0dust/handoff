@@ -1,0 +1,16 @@
+{
+  "title": "Stale incident handoff",
+  "summary": "The production symptom was observed before the rollback.",
+  "recheck_by": "2026-06-14T12:00:00.000Z",
+  "current_hypothesis": "Cache keys may have changed, but this must be rechecked.",
+  "claims": [
+    {
+      "claim_id": "clm_stale",
+      "text": "The error rate increased after deploy 2026.06.14.",
+      "confidence": "low",
+      "status": "observed",
+      "evidence_ids": [],
+      "needs_recheck": true
+    }
+  ]
+}

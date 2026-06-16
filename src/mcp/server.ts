@@ -1,0 +1,349 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+
+import { RelayApiClient } from '../api/client.js';
+import { packetStatuses } from '../protocol/schema.js';
+import { RelayService } from '../service/relay-service.js';
+import { createRelayDatabase } from '../storage/database.js';
+
+export interface McpToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, z.ZodTypeAny>;
+  handler: (args: any) => any | Promise<any>;
+}
+
+const sourceClient = z
+  .enum(['claude-code', 'codex', 'cursor', 'generic', 'other'])
+  .default('generic');
+const confidence = z.enum(['low', 'medium', 'high']).optional();
+const historyFilter = z.enum(['all', 'drafts', 'sent', 'open', 'closed']).optional();
+const projectInput = z
+  .object({
+    repo_name: z.string(),
+    git_remote_fingerprint: z.string().optional(),
+    branch: z.string().optional(),
+    commit_hash: z.string().optional(),
+  })
+  .optional();
+const packetQueryInput = {
+  project: z.string().optional(),
+  sender: z.string().optional(),
+  recipient: z.string().optional(),
+  status: z.enum(packetStatuses).optional(),
+  fileOrSymbol: z.string().optional(),
+  ticketOrPr: z.string().optional(),
+};
+const evidenceInput = z
+  .array(
+    z.object({
+      evidence_id: z.string().optional(),
+      kind: z
+        .enum([
+          'file_excerpt',
+          'command_output',
+          'test_failure',
+          'error_message',
+          'log_excerpt',
+          'diff_summary',
+          'ticket_link',
+          'pr_link',
+          'human_note',
+        ])
+        .default('human_note'),
+      label: z.string(),
+      source: z.string(),
+      excerpt: z.string(),
+      hash: z.string().optional(),
+      captured_at: z.string().optional(),
+      sensitivity: z.enum(['normal', 'private', 'secret_detected', 'restricted']).optional(),
+    }),
+  )
+  .optional();
+const claimInput = z
+  .array(
+    z.object({
+      claim_id: z.string().optional(),
+      text: z.string(),
+      confidence: z.enum(['low', 'medium', 'high']).optional(),
+      status: z.enum(['observed', 'inferred', 'suspected', 'disproven', 'superseded']).optional(),
+      evidence_ids: z.array(z.string()).optional(),
+      needs_recheck: z.boolean().optional(),
+    }),
+  )
+  .optional();
+
+type RelayBackend = RelayService | RelayApiClient;
+
+function asToolResult(value: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
+    structuredContent: value as Record<string, unknown>,
+  };
+}
+
+export function getMcpToolDefinitions(service: RelayBackend): McpToolDefinition[] {
+  return [
+    {
+      name: 'relay_ask',
+      description:
+        'Draft a human-reviewed ask packet for a teammate. Does not send until relay_approve.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        to: z.string().describe('@handle recipient'),
+        question: z.string(),
+        title: z.string(),
+        summary: z.string(),
+        sourceClient,
+        project: projectInput,
+        claims: claimInput,
+        evidence: evidenceInput,
+        filesOrSymbols: z.array(z.string()).optional(),
+        commandsOrTestsRun: z.array(z.string()).optional(),
+        whatWasTried: z.array(z.string()).optional(),
+        knownFailures: z.array(z.string()).optional(),
+        currentHypothesis: z.string().optional(),
+        confidence,
+        suggestedNextSteps: z.array(z.string()).optional(),
+      },
+      handler: async (args) => {
+        const result = await service.createAskDraft(args);
+        return { id: result.id, status: result.packet.status, packet: result.packet };
+      },
+    },
+    {
+      name: 'relay_share',
+      description:
+        'Draft a human-reviewed share packet for a teammate. Does not send until relay_approve.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        to: z.string(),
+        finding: z.string(),
+        title: z.string(),
+        summary: z.string(),
+        sourceClient,
+        project: projectInput,
+        claims: claimInput,
+        evidence: evidenceInput,
+        filesOrSymbols: z.array(z.string()).optional(),
+        commandsOrTestsRun: z.array(z.string()).optional(),
+        whatWasTried: z.array(z.string()).optional(),
+        knownFailures: z.array(z.string()).optional(),
+        currentHypothesis: z.string().optional(),
+        confidence,
+        suggestedNextSteps: z.array(z.string()).optional(),
+      },
+      handler: async (args) => {
+        const result = await service.createShareDraft(args);
+        return { id: result.id, status: result.packet.status, packet: result.packet };
+      },
+    },
+    {
+      name: 'relay_update_draft',
+      description: 'Edit an ask/share draft before it is approved and sent.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        title: z.string().optional(),
+        summary: z.string().optional(),
+        question: z.string().optional(),
+        finding: z.string().optional(),
+        claims: claimInput,
+        evidence: evidenceInput,
+        filesOrSymbols: z.array(z.string()).optional(),
+        commandsOrTestsRun: z.array(z.string()).optional(),
+        whatWasTried: z.array(z.string()).optional(),
+        knownFailures: z.array(z.string()).optional(),
+        currentHypothesis: z.string().optional(),
+        confidence,
+        suggestedNextSteps: z.array(z.string()).optional(),
+      },
+      handler: async (args) => service.updateDraft(args),
+    },
+    {
+      name: 'relay_configure_project_alias',
+      description: 'Configure a workspace project/repo alias. Requires workspace admin token.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        canonicalProject: z.string(),
+        alias: z.string(),
+      },
+      handler: async (args) => service.configureProjectAlias(args),
+    },
+    {
+      name: 'relay_project_aliases',
+      description: 'List configured project/repo aliases for a workspace.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+      },
+      handler: async (args) => service.listProjectAliases(args),
+    },
+    {
+      name: 'relay_approve',
+      description: 'Approve and send a drafted ask/share packet or approve a reply packet.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        approvalToken: z.string(),
+        allowSecretOverride: z.boolean().optional(),
+      },
+      handler: async (args) => service.approveAndSend(args),
+    },
+    {
+      name: 'relay_inbox',
+      description: 'List packets addressed to the current member.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+      },
+      handler: async (args) => service.listInbox(args),
+    },
+    {
+      name: 'relay_status',
+      description: 'Get a packet if the current member is allowed to read it.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+      },
+      handler: async (args) => service.getPacketForMember(args),
+    },
+    {
+      name: 'relay_view',
+      description: 'Record a packet view and return the packet for review.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+      },
+      handler: async (args) => service.viewPacket(args),
+    },
+    {
+      name: 'relay_accept',
+      description: 'Accept a reviewed packet before hydration.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+      },
+      handler: async (args) => service.acceptPacket(args),
+    },
+    {
+      name: 'relay_hydrate',
+      description: 'Hydrate an accepted packet into agent context and record a hydration receipt.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        client: z.string().default('generic'),
+        sessionId: z.string().optional(),
+        approvalToken: z.string(),
+      },
+      handler: async (args) => service.hydratePacket(args),
+    },
+    {
+      name: 'relay_reply',
+      description:
+        'Draft a reply to an accepted/hydrated ask packet. Requires relay_approve to return.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        answer: z.string(),
+        summary: z.string(),
+        sourceClient,
+        evidence: evidenceInput,
+        confidence,
+      },
+      handler: async (args) => service.createReplyDraft(args),
+    },
+    {
+      name: 'relay_clarify',
+      description: 'Request clarification from the sender after reviewing an addressed packet.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        question: z.string(),
+        requestedEvidence: z.array(z.string()).optional(),
+      },
+      handler: async (args) => service.requestClarification(args),
+    },
+    {
+      name: 'relay_decline',
+      description: 'Decline a packet addressed to the current member.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        reason: z.string().optional(),
+      },
+      handler: async (args) => service.declinePacket(args),
+    },
+    {
+      name: 'relay_archive',
+      description: 'Archive a readable packet.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+      },
+      handler: async (args) => service.archivePacket(args),
+    },
+    {
+      name: 'relay_search',
+      description: 'Search permitted packet history without hydrating results.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        query: z.string().optional(),
+        ...packetQueryInput,
+      },
+      handler: async (args) => service.searchPackets(args),
+    },
+    {
+      name: 'relay_history',
+      description: 'List permitted packet history with typed workflow filters.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        filter: historyFilter,
+        query: z.string().optional(),
+        ...packetQueryInput,
+      },
+      handler: async (args) => service.listHistory(args),
+    },
+    {
+      name: 'relay_audit',
+      description: 'List audit receipts for a packet or, for admins, the workspace.',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+        packetId: z.string().optional(),
+      },
+      handler: async (args) => service.listAuditReceipts(args),
+    },
+  ];
+}
+
+export function createMcpServer(service: RelayBackend): McpServer {
+  const server = new McpServer({ name: 'handoff', version: '0.1.0' });
+  for (const tool of getMcpToolDefinitions(service)) {
+    server.registerTool(
+      tool.name,
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      },
+      async (args) => asToolResult(await tool.handler(args)),
+    );
+  }
+  return server;
+}
+
+export async function startMcpServer(input: { dbPath: string; serverUrl?: string }): Promise<void> {
+  const service = input.serverUrl
+    ? new RelayApiClient({ serverUrl: input.serverUrl })
+    : new RelayService(createRelayDatabase(input.dbPath));
+  const server = createMcpServer(service);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('Handoff MCP server running on stdio');
+}

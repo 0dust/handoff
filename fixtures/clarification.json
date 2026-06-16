@@ -1,0 +1,7 @@
+{
+  "original_packet_id": "pkt_ask_normal",
+  "question": "Can you include the failing assertion and the token payload shape?",
+  "requested_evidence": ["test failure excerpt", "token payload fields"],
+  "recipient_member_id": "mem_alice",
+  "created_at": "2026-06-15T12:20:00.000Z"
+}

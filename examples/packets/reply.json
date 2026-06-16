@@ -1,0 +1,62 @@
+{
+  "packet_id": "pkt_example_reply",
+  "packet_type": "reply",
+  "workspace_id": "wrk_example",
+  "sender_member_id": "mem_alice",
+  "recipient_member_ids": ["mem_sam"],
+  "parent_packet_id": "pkt_example_ask",
+  "created_at": "2026-06-15T12:20:00.000Z",
+  "updated_at": "2026-06-15T12:20:00.000Z",
+  "expires_at": "2026-06-16T12:20:00.000Z",
+  "status": "pending_recipient_approval",
+  "project": {
+    "repo_name": "project-api",
+    "git_remote_fingerprint": "sha256:example",
+    "branch": "main"
+  },
+  "source_client": "claude-code",
+  "title": "Reply: Auth refresh test keeps failing",
+  "summary": "Likely refresh persistence ordering issue.",
+  "answer": "Persist the rotated refresh token before retrying the request.",
+  "claims": [
+    {
+      "claim_id": "clm_reply_1",
+      "text": "The retry path reads the old refresh token.",
+      "confidence": "high",
+      "status": "inferred",
+      "evidence_ids": [],
+      "needs_recheck": true
+    }
+  ],
+  "evidence": [],
+  "files_or_symbols": ["src/auth/middleware.ts"],
+  "commands_or_tests_run": [],
+  "what_was_tried": ["Compared local retry path with Sam's packet"],
+  "known_failures": [],
+  "current_hypothesis": "Persist refresh before retrying.",
+  "confidence": "high",
+  "suggested_next_steps": ["Move persistence before retry and rerun auth-refresh tests"],
+  "redaction_report": {
+    "blocked": false,
+    "findings": [],
+    "warnings": []
+  },
+  "hydration_policy": {
+    "requires_recipient_approval": true,
+    "requires_sender_approval_for_replies": true,
+    "allow_raw_transcript": false,
+    "max_characters": 8000
+  },
+  "audit_receipt": {
+    "receipt_id": "rcp_example_reply",
+    "action": "draft",
+    "actor_member_id": "mem_alice",
+    "packet_id": "pkt_example_reply",
+    "workspace_id": "wrk_example",
+    "created_at": "2026-06-15T12:20:00.000Z",
+    "metadata": {
+      "source_client": "claude-code"
+    },
+    "receipt_hash": "sha256:example"
+  }
+}

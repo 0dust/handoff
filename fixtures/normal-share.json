@@ -1,0 +1,51 @@
+{
+  "packet_id": "pkt_share_normal",
+  "packet_type": "share",
+  "workspace_id": "wrk_demo",
+  "sender_member_id": "mem_sam",
+  "recipient_member_ids": ["mem_alice"],
+  "created_at": "2026-06-15T12:05:00.000Z",
+  "updated_at": "2026-06-15T12:05:00.000Z",
+  "recheck_by": "2026-06-17T12:05:00.000Z",
+  "status": "pending_sender_approval",
+  "project": {
+    "repo_name": "project-api",
+    "git_remote_fingerprint": "sha256:demo",
+    "branch": "main"
+  },
+  "source_client": "claude-code",
+  "title": "Auth middleware finding",
+  "summary": "The middleware skips refresh persistence on retried requests.",
+  "finding": "Refresh persistence is skipped when middleware retries after a 401.",
+  "claims": [],
+  "evidence": [],
+  "files_or_symbols": ["src/auth/middleware.ts"],
+  "commands_or_tests_run": ["pnpm test auth-middleware"],
+  "what_was_tried": ["Traced retry path"],
+  "known_failures": [],
+  "current_hypothesis": "Persist refresh before retrying.",
+  "confidence": "high",
+  "suggested_next_steps": ["Patch middleware retry path"],
+  "redaction_report": {
+    "blocked": false,
+    "findings": [],
+    "warnings": []
+  },
+  "hydration_policy": {
+    "requires_recipient_approval": true,
+    "requires_sender_approval_for_replies": true,
+    "allow_raw_transcript": false,
+    "max_characters": 8000
+  },
+  "audit_receipt": {
+    "receipt_id": "rcp_share_fixture",
+    "action": "draft",
+    "actor_member_id": "mem_sam",
+    "packet_id": "pkt_share_normal",
+    "workspace_id": "wrk_demo",
+    "created_at": "2026-06-15T12:05:00.000Z",
+    "metadata": {
+      "source_client": "claude-code"
+    }
+  }
+}

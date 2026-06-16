@@ -1,0 +1,14 @@
+{
+  "receipt_id": "rcp_hydrate_example",
+  "action": "hydrate",
+  "actor_member_id": "mem_sam",
+  "packet_id": "pkt_example_reply",
+  "workspace_id": "wrk_example",
+  "created_at": "2026-06-15T12:25:00.000Z",
+  "metadata": {
+    "client": "codex",
+    "session_id": "sam-session",
+    "packet_type": "reply"
+  },
+  "receipt_hash": "sha256:example"
+}

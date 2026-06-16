@@ -1,0 +1,6 @@
+{
+  "packet_id": "pkt_superseded",
+  "status": "superseded",
+  "superseded_by_packet_id": "pkt_share_normal",
+  "reason": "Newer packet includes corrected middleware trace."
+}
