@@ -27,6 +27,7 @@ What is included:
 - SQLite coordination storage.
 - Fastify coordination API.
 - MCP server for Claude Code, Codex, and generic MCP clients.
+- Profile-backed setup with `start`, `invite`, `join`, and `doctor`.
 - CLI fallback for setup, member/project-alias flows, ask/share/update-draft/reply/clarify/inbox/status/hydrate/decline/archive/history/audit/watch/demo.
 - Audit and hydration receipts.
 - Local polling watcher with terminal output, best-effort desktop notifications, and generic webhook posts.
@@ -42,9 +43,10 @@ What this is not:
 Try it:
 
 ```bash
-pnpm install
-pnpm build
-node dist/cli.js demo two-user --db .relay/demo.db
+npx -y @0dust/handoff start
+npx -y @0dust/handoff invite alice
+npx -y @0dust/handoff join <invite-link>
+npx -y @0dust/handoff doctor
 ```
 
 ## Comparison

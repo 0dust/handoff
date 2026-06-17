@@ -10,6 +10,7 @@ import { runCli } from '../src/cli.js';
 import { getMcpToolDefinitions } from '../src/mcp/server.js';
 import { createNotificationDispatcher, createPollingWatcher } from '../src/notifications.js';
 import { RelayService } from '../src/service/relay-service.js';
+import { createProfileStore } from '../src/setup/profile.js';
 import { createRelayDatabase } from '../src/storage/database.js';
 
 function createService() {
@@ -252,6 +253,35 @@ describe('coordination API', () => {
       code: 'UNSUPPORTED_CLIENT',
     });
   });
+
+  test('invite GET endpoint shows a join command without accepting the invite', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'Invite Link Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/invite/${invite.invite.token}`,
+    });
+    const accepted = service.acceptInvite({
+      inviteToken: invite.invite.token,
+      displayName: 'Alice',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('npx -y @0dust/handoff join');
+    expect(response.body).toContain(`/invite/${invite.invite.token}`);
+    expect(accepted.member.handle).toBe('alice');
+  });
 });
 
 describe('MCP tool contracts', () => {
@@ -292,6 +322,92 @@ describe('MCP tool contracts', () => {
     });
 
     expect(result).toMatchObject({ status: 'pending_sender_approval' });
+  });
+
+  test('profile-backed schemas omit auth fields and handlers inject auth context', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Profile MCP Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    const tools = getMcpToolDefinitions(service, {
+      authContext: {
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const askTool = tools.find((tool) => tool.name === 'relay_ask');
+
+    expect(askTool?.inputSchema.authToken).toBeUndefined();
+    expect(askTool?.inputSchema.workspaceId).toBeUndefined();
+    const result = await askTool?.handler({
+      to: '@alice',
+      question: 'Can you inspect this?',
+      title: 'Profile auth',
+      summary: 'MCP should inject auth from the profile.',
+      sourceClient: 'codex',
+    });
+
+    expect(result).toMatchObject({ status: 'pending_sender_approval' });
+  });
+
+  test('explicit-auth MCP compatibility mode still exposes auth fields', () => {
+    const { service } = createService();
+    const tools = getMcpToolDefinitions(service, { explicitAuth: true });
+    const askTool = tools.find((tool) => tool.name === 'relay_ask');
+    const inboxTool = tools.find((tool) => tool.name === 'relay_inbox');
+
+    expect(askTool?.inputSchema.authToken).toBeTruthy();
+    expect(askTool?.inputSchema.workspaceId).toBeTruthy();
+    expect(inboxTool?.inputSchema.authToken).toBeTruthy();
+    expect(inboxTool?.inputSchema.workspaceId).toBeTruthy();
+  });
+
+  test('profile-backed MCP startup can resolve auth from the active profile', async () => {
+    const { service, dbPath } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Stored MCP Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const home = mkdtempSync(join(tmpdir(), 'handoff-mcp-profile-'));
+    const store = createProfileStore({ home });
+    store.saveProfile({
+      schemaVersion: 1,
+      profileName: 'default',
+      workspaceId: workspace.workspace.id,
+      workspaceName: workspace.workspace.name,
+      memberId: workspace.admin.id,
+      handle: workspace.admin.handle,
+      displayName: workspace.admin.display_name,
+      role: workspace.admin.role,
+      serverUrl: 'local-db',
+      localDatabasePath: dbPath,
+      serverMode: 'local',
+      createdAt: new Date().toISOString(),
+      lastVerifiedAt: new Date().toISOString(),
+    });
+    store.saveCredentials('default', {
+      memberToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      createdAt: new Date().toISOString(),
+    });
+    const tools = getMcpToolDefinitions(service, {
+      profileStore: store,
+      profileName: 'default',
+    });
+    const inboxTool = tools.find((tool) => tool.name === 'relay_inbox');
+
+    expect(inboxTool?.inputSchema.authToken).toBeUndefined();
+    expect(inboxTool?.inputSchema.workspaceId).toBeUndefined();
+    await expect(inboxTool?.handler({})).resolves.toEqual([]);
   });
 });
 
@@ -568,7 +684,7 @@ describe('CLI and watcher', () => {
     const scriptPath = join(process.cwd(), 'docs', 'demo-video-script.md');
     expect(existsSync(scriptPath)).toBe(true);
     const script = readFileSync(scriptPath, 'utf8');
-    expect(script).toContain('node dist/cli.js demo two-user');
+    expect(script).toContain('npx -y @0dust/handoff demo two-user');
     expect(script.toLowerCase()).toContain('record');
   });
 });

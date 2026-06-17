@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { Command, CommanderError } from 'commander';
 
 import { confirmLocalApproval } from './approval.js';
@@ -9,6 +12,14 @@ import { startMcpServer } from './mcp/server.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
 import type { RelayPacket } from './protocol/schema.js';
 import { RelayService } from './service/relay-service.js';
+import { formatDoctorHuman, runDoctorChecks } from './setup/doctor.js';
+import {
+  createBackendForProfile,
+  createInviteForProfile,
+  joinInvite,
+  startHandoffSetup,
+} from './setup/orchestrator.js';
+import { createProfileStore, resolveProfileName } from './setup/profile.js';
 import { createRelayDatabase } from './storage/database.js';
 
 export interface CliRunResult {
@@ -25,6 +36,7 @@ interface CliIo {
 interface CommonOptions {
   db?: string;
   json?: boolean;
+  profile?: string;
   serverUrl?: string;
   token?: string;
   workspace?: string;
@@ -36,6 +48,7 @@ const defaultIo: CliIo = {
 };
 
 type CliBackend = RelayService | RelayApiClient;
+type InstallableMcpClient = 'codex' | 'cursor';
 
 function createBackend(options: CommonOptions): CliBackend {
   if (options.serverUrl) {
@@ -50,6 +63,80 @@ function closeBackend(backend: CliBackend): void {
   if (backend instanceof RelayService) {
     backend.close();
   }
+}
+
+function createProfileBackend(options: CommonOptions): {
+  backend: CliBackend;
+  credentials: { approvalSecret: string; memberToken: string };
+  profile: { profileName: string; workspaceId: string };
+} {
+  const store = createProfileStore();
+  const profileName = resolveProfileName(options.profile);
+  const profile = store.loadProfile(profileName);
+  if (!profile) {
+    throw new Error(
+      `No active Handoff profile found. Run \`npx -y @0dust/handoff start\` or \`npx -y @0dust/handoff doctor\`.`,
+    );
+  }
+  const credentials = store.loadCredentials(profile.profileName);
+  const resolvedProfile = {
+    ...profile,
+    workspaceId:
+      options.workspace ??
+      process.env.HANDOFF_WORKSPACE_ID ??
+      process.env.AGENT_RELAY_WORKSPACE ??
+      profile.workspaceId,
+    serverUrl:
+      options.serverUrl ??
+      process.env.HANDOFF_SERVER_URL ??
+      process.env.AGENT_RELAY_SERVER_URL ??
+      profile.serverUrl,
+    localDatabasePath: options.db ?? process.env.HANDOFF_DB ?? profile.localDatabasePath,
+  };
+  const resolvedCredentials = {
+    ...credentials,
+    memberToken:
+      options.token ??
+      process.env.HANDOFF_MEMBER_TOKEN ??
+      process.env.AGENT_RELAY_TOKEN ??
+      credentials.memberToken,
+    approvalSecret:
+      process.env.HANDOFF_APPROVAL_SECRET ??
+      process.env.AGENT_RELAY_APPROVAL_SECRET ??
+      credentials.approvalSecret,
+  };
+  return {
+    backend: createBackendForProfile({
+      profile: resolvedProfile,
+      credentials: resolvedCredentials,
+    }),
+    credentials: resolvedCredentials,
+    profile: resolvedProfile,
+  };
+}
+
+function createAuthContext(
+  options: CommonOptions,
+  input: { requireWorkspace?: boolean } = { requireWorkspace: true },
+): {
+  authToken: string;
+  backend: CliBackend;
+  workspaceId: string;
+} {
+  const requireWorkspace = input.requireWorkspace ?? true;
+  if (options.token && (!requireWorkspace || options.workspace)) {
+    return {
+      authToken: options.token,
+      backend: createBackend(options),
+      workspaceId: options.workspace ?? '',
+    };
+  }
+  const profileContext = createProfileBackend(options);
+  return {
+    authToken: options.token ?? profileContext.credentials.memberToken,
+    backend: profileContext.backend,
+    workspaceId: options.workspace ?? profileContext.profile.workspaceId,
+  };
 }
 
 function write(io: CliIo, value: unknown, json?: boolean): void {
@@ -94,9 +181,108 @@ function formatCliError(error: unknown, json: boolean): string {
   return `[${payload.error.code}] ${payload.error.message}\n`;
 }
 
+function parseInstallMcpClient(value: string | undefined): InstallableMcpClient | undefined {
+  if (!value) return undefined;
+  if (value === 'codex' || value === 'cursor') return value;
+  throw new Error('Unsupported MCP client. Use --install-mcp codex or --install-mcp cursor.');
+}
+
+function startOutput(result: Awaited<ReturnType<typeof startHandoffSetup>>) {
+  return {
+    profile: result.profile.profileName,
+    handle: result.profile.handle,
+    workspaceName: result.profile.workspaceName,
+    serverUrl: result.profile.serverUrl,
+    publicInviteBaseUrl: result.profile.publicInviteBaseUrl,
+    serverStatus: result.server.status,
+    mcp: result.mcp,
+    nextCommand: result.nextCommand,
+    warning: result.server.warning,
+  };
+}
+
+function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>): string {
+  const lines = [
+    result.created ? 'Handoff setup created.' : 'Handoff setup is ready.',
+    `Profile: ${result.profile.profileName}`,
+    `Handle: @${result.profile.handle}`,
+    `Workspace: ${result.profile.workspaceName}`,
+    `Server: ${result.profile.serverUrl}`,
+  ];
+  if (result.profile.publicInviteBaseUrl) {
+    lines.push(`Invite URL: ${result.profile.publicInviteBaseUrl}`);
+  }
+  if (result.server.warning) {
+    lines.push(`Warning: ${result.server.warning}`);
+  }
+  lines.push('', ...formatMcpSetupHuman(result.mcp), '', 'Next:', result.nextCommand);
+  return lines.join('\n');
+}
+
+function formatInviteHuman(result: Awaited<ReturnType<typeof createInviteForProfile>>): string {
+  const lines = [
+    `Invite ready for @${result.handle}.`,
+    `Expires: ${result.expiresAt}`,
+    '',
+    result.joinCommand,
+    '',
+    result.inviteLink,
+  ];
+  if (result.warning) lines.push('', `Warning: ${result.warning}`);
+  return lines.join('\n');
+}
+
+function joinOutput(result: Awaited<ReturnType<typeof joinInvite>>) {
+  return {
+    profile: result.profile.profileName,
+    handle: result.profile.handle,
+    workspaceName: result.profile.workspaceName,
+    serverUrl: result.profile.serverUrl,
+    mcp: result.mcp,
+    nextAgentInstruction: result.nextAgentInstruction,
+  };
+}
+
+function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string {
+  return [
+    `Joined ${result.profile.workspaceName} as @${result.profile.handle}.`,
+    `Profile: ${result.profile.profileName}`,
+    `Server: ${result.profile.serverUrl}`,
+    '',
+    ...formatMcpSetupHuman(result.mcp),
+    '',
+    'Agent prompt:',
+    result.nextAgentInstruction,
+  ].join('\n');
+}
+
+function formatMcpSetupHuman(mcp: Awaited<ReturnType<typeof startHandoffSetup>>['mcp']): string[] {
+  const lines = ['MCP setup:', `Command: ${mcp.command}`];
+  const installed = mcp.configs.filter((config) => config.installed);
+  if (installed.length > 0) {
+    lines.push(`Detected: ${installed.map((config) => config.client).join(', ')}`);
+    return lines;
+  }
+  if (mcp.status === 'skipped') {
+    lines.push('Status: skipped.');
+    return lines;
+  } else {
+    lines.push('Status: not detected in Codex, Claude Code, or Cursor config yet.');
+  }
+  lines.push('Install for Codex: npx -y @0dust/handoff start --install-mcp codex');
+  lines.push('Install for Cursor: npx -y @0dust/handoff start --install-mcp cursor');
+  lines.push(
+    `Claude Code: ${
+      mcp.installCommands.find((command) => command.startsWith('claude ')) ??
+      'add the command above with claude mcp add-json'
+    }`,
+  );
+  return lines;
+}
+
 function addCommonOptions(command: Command): Command {
   return command
-    .option('--db <path>', 'SQLite database path', process.env.AGENT_RELAY_DB ?? '.relay/relay.db')
+    .option('--db <path>', 'SQLite database path')
     .option('--server-url <url>', 'Relay coordination API URL')
     .option('--json', 'Print JSON output');
 }
@@ -120,8 +306,8 @@ function parseListOption(value: string | undefined): string[] | undefined {
 
 function addAuthOptions(command: Command): Command {
   return addCommonOptions(command)
-    .requiredOption('--token <token>', 'Relay member token')
-    .requiredOption('--workspace <workspaceId>', 'Relay workspace id');
+    .option('--token <token>', 'Relay member token')
+    .option('--workspace <workspaceId>', 'Relay workspace id');
 }
 
 function addPacketFilterOptions(command: Command): Command {
@@ -158,6 +344,104 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     .description('Human-approved handoffs between coding agents.')
     .version('0.1.0');
 
+  program
+    .command('start')
+    .description('Create or reuse a frictionless Handoff profile and local server')
+    .option('--lan', 'Prepare LAN-reachable invite links')
+    .option('--profile <name>', 'Profile name')
+    .option('--handle <handle>', 'Local member handle')
+    .option('--display-name <name>', 'Local display name')
+    .option('--workspace-name <name>', 'Workspace name')
+    .option('--host <host>', 'Server bind host')
+    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
+    .option('--port <port>', 'Server port')
+    .option('--public-url <url>', 'Public invite base URL')
+    .option('--no-mcp-install', 'Do not offer automatic MCP setup')
+    .option('--json', 'Print JSON output')
+    .action(
+      async (
+        options: CommonOptions & {
+          displayName?: string;
+          handle?: string;
+          host?: string;
+          installMcp?: 'codex' | 'cursor';
+          lan?: boolean;
+          mcpInstall?: boolean;
+          port?: string;
+          publicUrl?: string;
+          workspaceName?: string;
+        },
+      ) => {
+        const result = await startHandoffSetup({
+          displayName: options.displayName,
+          handle: options.handle,
+          host: options.host,
+          installMcpClient: parseInstallMcpClient(options.installMcp),
+          lan: options.lan,
+          noMcpInstall: options.mcpInstall === false,
+          port: options.port ? Number(options.port) : undefined,
+          profileName: options.profile,
+          publicUrl: options.publicUrl,
+          workspaceName: options.workspaceName,
+        });
+        write(io, options.json ? startOutput(result) : formatStartHuman(result), options.json);
+      },
+    );
+
+  program
+    .command('invite')
+    .description('Invite a teammate with the active Handoff profile')
+    .argument('<handle>', '@handle to invite')
+    .option('--profile <name>', 'Profile name')
+    .option('--expires-in <duration>', 'Reserved for future invite durations')
+    .option('--json', 'Print JSON output')
+    .action(async (handle: string, options: CommonOptions) => {
+      const result = await createInviteForProfile({ handle, profileName: options.profile });
+      write(io, options.json ? result : formatInviteHuman(result), options.json);
+    });
+
+  program
+    .command('join')
+    .description('Join a Handoff workspace from an invite link')
+    .argument('<invite>', 'Invite URL or raw invite token with --server-url')
+    .option('--profile <name>', 'Profile name')
+    .option('--display-name <name>', 'Display name')
+    .option('--server-url <url>', 'Server URL for raw invite tokens')
+    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
+    .option('--no-mcp-install', 'Do not offer automatic MCP setup')
+    .option('--json', 'Print JSON output')
+    .action(
+      async (
+        invite: string,
+        options: CommonOptions & {
+          displayName?: string;
+          installMcp?: string;
+          mcpInstall?: boolean;
+        },
+      ) => {
+        const result = await joinInvite({
+          displayName: options.displayName,
+          installMcpClient: parseInstallMcpClient(options.installMcp),
+          invite,
+          noMcpInstall: options.mcpInstall === false,
+          profileName: options.profile,
+          serverUrl: options.serverUrl,
+        });
+        write(io, options.json ? joinOutput(result) : formatJoinHuman(result), options.json);
+      },
+    );
+
+  program
+    .command('doctor')
+    .description('Diagnose Handoff setup health')
+    .option('--profile <name>', 'Profile name')
+    .option('--fix', 'Repair safe local issues')
+    .option('--json', 'Print JSON output')
+    .action(async (options: CommonOptions & { fix?: boolean }) => {
+      const report = await runDoctorChecks({ fix: options.fix, profileName: options.profile });
+      write(io, options.json ? report : formatDoctorHuman(report), options.json);
+    });
+
   const workspace = program.command('workspace').description('Workspace setup flows');
   addCommonOptions(
     workspace
@@ -185,23 +469,23 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .requiredOption('--canonical <project>', 'Canonical project/repo name')
       .requiredOption('--alias <project>', 'Alias project/repo name'),
   ).action(async (options: CommonOptions & { canonical: string; alias: string }) => {
-    const service = createBackend(options);
-    const result = await service.configureProjectAlias({
-      authToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.configureProjectAlias({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       canonicalProject: options.canonical,
       alias: options.alias,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
   addAuthOptions(workspaceAlias.command('list')).action(async (options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.listProjectAliases({
-      authToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.listProjectAliases({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -209,13 +493,13 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     member.command('invite').requiredOption('--handle <handle>', 'Handle to invite'),
   ).action(async (options: CommonOptions & { handle: string }) => {
-    const service = createBackend(options);
-    const result = await service.inviteMember({
-      adminToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.inviteMember({
+      adminToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       handle: options.handle,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
   addCommonOptions(
@@ -233,24 +517,24 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     write(io, result, options.json);
   });
   addAuthOptions(member.command('list')).action(async (options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.listMembers({
-      authToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.listMembers({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
   addAuthOptions(
     member.command('revoke').requiredOption('--member <memberId>', 'Member id to revoke'),
   ).action(async (options: CommonOptions & { member: string }) => {
-    const service = createBackend(options);
-    const result = await service.revokeMember({
-      adminToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.revokeMember({
+      adminToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       memberId: options.member,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
   addCommonOptions(
@@ -294,10 +578,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .option('--confidence <level>', 'low, medium, or high')
       .option('--next-steps <items>', 'Comma-separated suggested next steps'),
   ).action(async (handle: string, question: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.createAskDraft({
-      authToken: options.token,
-      workspaceId: options.workspace,
+    const auth = createAuthContext(options);
+    const result = await auth.backend.createAskDraft({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       to: handle,
       question,
       title: options.title,
@@ -313,7 +597,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       confidence: options.confidence,
       suggestedNextSteps: parseListOption(options.nextSteps),
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -335,10 +619,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .option('--confidence <level>', 'low, medium, or high')
       .option('--next-steps <items>', 'Comma-separated suggested next steps'),
   ).action(async (handle: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.createShareDraft({
-      authToken: options.token,
-      workspaceId: options.workspace,
+    const auth = createAuthContext(options);
+    const result = await auth.backend.createShareDraft({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       to: handle,
       finding: options.finding,
       title: options.title,
@@ -354,7 +638,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       confidence: options.confidence,
       suggestedNextSteps: parseListOption(options.nextSteps),
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -362,7 +646,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('update-draft')
       .argument('<packetId>', 'Draft packet id')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .option('--title <title>', 'Packet title')
       .option('--summary <summary>', 'Packet summary')
       .option('--question <question>', 'Ask question')
@@ -377,9 +661,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .option('--confidence <level>', 'low, medium, or high')
       .option('--next-steps <items>', 'Comma-separated suggested next steps'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.updateDraft({
-      authToken: options.token,
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.updateDraft({
+      authToken: auth.authToken,
       packetId,
       title: options.title,
       summary: options.summary,
@@ -395,7 +679,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       confidence: options.confidence,
       suggestedNextSteps: parseListOption(options.nextSteps),
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -403,16 +687,16 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('approve')
       .argument('<packetId>', 'Packet id')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .requiredOption('--approval-token <token>', 'Human-generated approval token'),
   ).action(async (packetId: string, options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.approveAndSend({
-      authToken: options.token ?? '',
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.approveAndSend({
+      authToken: auth.authToken,
       packetId,
       approvalToken: (options as any).approvalToken,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -420,23 +704,34 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('approval-token')
       .argument('<packetId>')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
+      .option('--profile <name>', 'Profile name')
       .option('--approval-secret <secret>', 'Local approval secret from workspace/member setup')
       .requiredOption('--action <action>', 'send, reply, or hydrate'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
+    const profileContext = options.token ? undefined : createProfileBackend(options);
+    const service = profileContext?.backend ?? createBackend(options);
     await confirmLocalApproval({ packetId, action: options.action });
-    const approvalSecret = options.approvalSecret ?? process.env.AGENT_RELAY_APPROVAL_SECRET;
+    const approvalSecret =
+      options.approvalSecret ??
+      process.env.HANDOFF_APPROVAL_SECRET ??
+      process.env.AGENT_RELAY_APPROVAL_SECRET ??
+      profileContext?.credentials.approvalSecret;
+    const authToken =
+      options.token ??
+      process.env.HANDOFF_MEMBER_TOKEN ??
+      process.env.AGENT_RELAY_TOKEN ??
+      profileContext?.credentials.memberToken;
     const result =
       service instanceof RelayApiClient
         ? await service.createApprovalToken({
-            authToken: options.token,
+            authToken: authToken ?? '',
             approvalSecret,
             packetId,
             action: options.action,
           })
         : await service.createApprovalToken({
-            authToken: options.token,
+            authToken: authToken ?? '',
             approvalSecret,
             packetId,
             action: options.action,
@@ -446,39 +741,42 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   });
 
   addAuthOptions(program.command('inbox')).action(async (options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.listInbox({
-      authToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.listInbox({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
   addCommonOptions(
-    program.command('status').argument('<packetId>').requiredOption('--token <token>'),
+    program.command('status').argument('<packetId>').option('--token <token>'),
   ).action(async (packetId: string, options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.getPacketForMember({ authToken: options.token ?? '', packetId });
-    closeBackend(service);
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.getPacketForMember({
+      authToken: auth.authToken,
+      packetId,
+    });
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
-  addCommonOptions(
-    program.command('view').argument('<packetId>').requiredOption('--token <token>'),
-  ).action(async (packetId: string, options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.viewPacket({ authToken: options.token ?? '', packetId });
-    closeBackend(service);
-    write(io, result, options.json);
-  });
+  addCommonOptions(program.command('view').argument('<packetId>').option('--token <token>')).action(
+    async (packetId: string, options: CommonOptions) => {
+      const auth = createAuthContext(options, { requireWorkspace: false });
+      const result = await auth.backend.viewPacket({ authToken: auth.authToken, packetId });
+      closeBackend(auth.backend);
+      write(io, result, options.json);
+    },
+  );
 
   addCommonOptions(
-    program.command('accept').argument('<packetId>').requiredOption('--token <token>'),
+    program.command('accept').argument('<packetId>').option('--token <token>'),
   ).action(async (packetId: string, options: CommonOptions) => {
-    const service = createBackend(options);
-    const result = await service.acceptPacket({ authToken: options.token ?? '', packetId });
-    closeBackend(service);
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.acceptPacket({ authToken: auth.authToken, packetId });
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -486,20 +784,20 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('hydrate')
       .argument('<packetId>')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .option('--client <client>', 'Client name', 'generic')
       .option('--session <sessionId>', 'Client session id')
       .requiredOption('--approval-token <token>', 'Human-generated hydration approval token'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.hydratePacket({
-      authToken: options.token,
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.hydratePacket({
+      authToken: auth.authToken,
       packetId,
       client: options.client,
       sessionId: options.session,
       approvalToken: options.approvalToken,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -508,15 +806,15 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('reply')
       .argument('<packetId>')
       .argument('<answer>')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .requiredOption('--summary <summary>')
       .option('--source-client <client>', 'Source client', 'generic')
       .option('--evidence-json <json>', 'JSON array of evidence objects')
       .option('--confidence <level>', 'low, medium, or high'),
   ).action(async (packetId: string, answer: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.createReplyDraft({
-      authToken: options.token,
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.createReplyDraft({
+      authToken: auth.authToken,
       packetId,
       answer,
       summary: options.summary,
@@ -524,7 +822,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       evidence: parseJsonOption(options.evidenceJson),
       confidence: options.confidence,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -532,18 +830,18 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('clarify')
       .argument('<packetId>')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .requiredOption('--question <question>', 'Clarification question')
       .option('--requested-evidence <items>', 'Comma-separated requested evidence labels'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
-    const service = createBackend(options);
-    const result = await service.requestClarification({
-      authToken: options.token,
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.requestClarification({
+      authToken: auth.authToken,
       packetId,
       question: options.question,
       requestedEvidence: parseListOption(options.requestedEvidence),
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -552,19 +850,19 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       program
         .command(commandName)
         .argument('<packetId>')
-        .requiredOption('--token <token>')
+        .option('--token <token>')
         .option('--reason <reason>', 'Decline reason'),
     ).action(async (packetId: string, options: CommonOptions & { reason?: string }) => {
-      const service = createBackend(options);
+      const auth = createAuthContext(options, { requireWorkspace: false });
       const result =
         commandName === 'decline'
-          ? await service.declinePacket({
-              authToken: options.token ?? '',
+          ? await auth.backend.declinePacket({
+              authToken: auth.authToken,
               packetId,
               reason: options.reason,
             })
-          : await service.archivePacket({ authToken: options.token ?? '', packetId });
-      closeBackend(service);
+          : await auth.backend.archivePacket({ authToken: auth.authToken, packetId });
+      closeBackend(auth.backend);
       write(io, result, options.json);
     });
   }
@@ -573,20 +871,20 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     program
       .command('close')
       .argument('<packetId>')
-      .requiredOption('--token <token>')
+      .option('--token <token>')
       .option('--resolution <resolution>', 'resolved or unresolved', 'resolved'),
   ).action(
     async (
       packetId: string,
       options: CommonOptions & { resolution: 'resolved' | 'unresolved' },
     ) => {
-      const service = createBackend(options);
-      const result = await service.closePacket({
-        authToken: options.token ?? '',
+      const auth = createAuthContext(options, { requireWorkspace: false });
+      const result = await auth.backend.closePacket({
+        authToken: auth.authToken,
         packetId,
         resolution: options.resolution,
       });
-      closeBackend(service);
+      closeBackend(auth.backend);
       write(io, result, options.json);
     },
   );
@@ -605,10 +903,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         ticketPr?: string;
       },
     ) => {
-      const service = createBackend(options);
-      const result = await service.searchPackets({
-        authToken: options.token ?? '',
-        workspaceId: options.workspace ?? '',
+      const auth = createAuthContext(options);
+      const result = await auth.backend.searchPackets({
+        authToken: auth.authToken,
+        workspaceId: auth.workspaceId,
         query: options.query,
         project: options.project,
         sender: options.sender,
@@ -617,7 +915,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         fileOrSymbol: options.fileSymbol,
         ticketOrPr: options.ticketPr,
       });
-      closeBackend(service);
+      closeBackend(auth.backend);
       write(io, result, options.json);
     },
   );
@@ -642,10 +940,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         ticketPr?: string;
       },
     ) => {
-      const service = createBackend(options);
-      const result = await service.listHistory({
-        authToken: options.token ?? '',
-        workspaceId: options.workspace ?? '',
+      const auth = createAuthContext(options);
+      const result = await auth.backend.listHistory({
+        authToken: auth.authToken,
+        workspaceId: auth.workspaceId,
         filter: options.filter,
         query: options.query,
         project: options.project,
@@ -655,7 +953,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         fileOrSymbol: options.fileSymbol,
         ticketOrPr: options.ticketPr,
       });
-      closeBackend(service);
+      closeBackend(auth.backend);
       write(io, result, options.json);
     },
   );
@@ -663,13 +961,13 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     program.command('audit').option('--packet <packetId>', 'Optional packet id'),
   ).action(async (options: CommonOptions & { packet?: string }) => {
-    const service = createBackend(options);
-    const result = await service.listAuditReceipts({
-      authToken: options.token ?? '',
-      workspaceId: options.workspace ?? '',
+    const auth = createAuthContext(options);
+    const result = await auth.backend.listAuditReceipts({
+      authToken: auth.authToken,
+      workspaceId: auth.workspaceId,
       packetId: options.packet,
     });
-    closeBackend(service);
+    closeBackend(auth.backend);
     write(io, result, options.json);
   });
 
@@ -700,7 +998,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         webhookHeader?: string[];
       },
     ) => {
-      const service = createBackend(options);
+      const auth = createAuthContext(options);
       const notify = createNotificationDispatcher({
         writeTerminal: (message) => io.writeErr(`${message}\n`),
         desktop: options.desktopNotifications,
@@ -714,15 +1012,15 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         poll: async () => {
           const [packets, members] = await Promise.all([
             Promise.resolve(
-              service.listInbox({
-                authToken: options.token ?? '',
-                workspaceId: options.workspace ?? '',
+              auth.backend.listInbox({
+                authToken: auth.authToken,
+                workspaceId: auth.workspaceId,
               }),
             ),
             Promise.resolve(
-              service.listMembers({
-                authToken: options.token ?? '',
-                workspaceId: options.workspace ?? '',
+              auth.backend.listMembers({
+                authToken: auth.authToken,
+                workspaceId: auth.workspaceId,
               }),
             ),
           ]);
@@ -743,7 +1041,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       });
       await watcher.tick();
       if (options.once) {
-        closeBackend(service);
+        closeBackend(auth.backend);
         return;
       }
       watcher.start();
@@ -766,9 +1064,16 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       `Handoff coordination server listening on http://${options.host}:${options.port}\n`,
     );
   });
-  addCommonOptions(server.command('mcp')).action(async (options: CommonOptions) => {
+  addCommonOptions(
+    server
+      .command('mcp')
+      .option('--profile <name>', 'Use a stored Handoff profile')
+      .option('--explicit-auth', 'Expose authToken and workspaceId in MCP schemas'),
+  ).action(async (options: CommonOptions & { explicitAuth?: boolean }) => {
     await startMcpServer({
       dbPath: options.db ?? '.relay/relay.db',
+      explicitAuth: options.explicitAuth,
+      profileName: options.profile,
       serverUrl: options.serverUrl,
     });
   });
@@ -965,7 +1270,16 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isCliEntrypoint(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return import.meta.url === `file://${process.argv[1]}`;
+  }
+}
+
+if (isCliEntrypoint()) {
   buildCliProgram()
     .parseAsync(process.argv)
     .catch((error) => {

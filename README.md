@@ -2,12 +2,12 @@
 
 # Handoff
 
-  <p><strong>Human-approved context handoffs between coding agents.</strong></p>
+  <p><strong>Human-approved Relay Packet context handoffs between coding agents.</strong></p>
 
-  <p>Package what one agent session learned so another coding agent can continue from the right context.</p>
+  <p>Package the useful context from one agent session so another coding agent can continue without rediscovery.</p>
 
   <p>
-    MCP server | local-first | SQLite coordination | explicit approvals | audit receipts
+    MCP server | local-first profiles | SQLite coordination | explicit approvals | audit receipts
   </p>
 
   <p>
@@ -18,9 +18,9 @@
   </p>
 
   <p>
-    <a href="#create-a-handoff">Create a handoff</a> |
-    <a href="#demo">Demo</a> |
-    <a href="#what-you-get">What you get</a> |
+    <a href="#quick-start">Quick start</a> |
+    <a href="#use-it-from-your-agent">Use it from your agent</a> |
+    <a href="#mcp-setup">MCP setup</a> |
     <a href="#security-defaults">Security defaults</a> |
     <a href="#commands">Commands</a>
   </p>
@@ -30,11 +30,9 @@
 
 Coding agents still work in isolated sessions. When an engineer gets stuck or finishes an investigation, the useful context is trapped in one local session: files inspected, tests run, errors seen, hypotheses ruled out, and the current best next step.
 
-The usual handoff is lossy: paste logs into Slack, summarize from memory, ask someone else to reconstruct the thread, then hope their agent reads the right details.
+Handoff turns selected session context into a Relay Packet: a reviewable handoff with summary, claims, evidence, files, commands, known failures, confidence, expiry, and provenance. The sender approves exactly what leaves their session. The recipient reviews the packet before hydrating it into Claude Code, Codex, Cursor, or another MCP-capable agent.
 
-Handoff turns that selected session context into a Relay Packet: a reviewable handoff with summary, claims, evidence, files, commands, known failures, confidence, expiry, and provenance. The sender approves exactly what leaves their session. The recipient reviews the packet before hydrating it into Claude Code, Codex, Cursor, or another MCP-capable agent.
-
-This is not chat between agents. `/ask` and `/share-with` are entry points for creating handoff packets. The wedge is making context transfer clean, bounded, auditable, and human-approved.
+This is not chat between agents. `relay_share` and `relay_ask` create handoff packets. The wedge is bounded, auditable, human-approved context transfer.
 
 ```text
 Sam's Codex session
@@ -44,146 +42,206 @@ Sam's Codex session
   -> Alice's Claude Code session continues from that context
 ```
 
-## Create A Handoff
+## Quick Start
 
-Handoff is meant to sit behind each coding agent as a local stdio MCP server. For a solo demo, every command can use one SQLite file. For a team, run one shared coordination server and point each local MCP process at it.
-
-Start a local coordination server:
+No global install is required.
 
 ```bash
-npx -y @0dust/handoff server start --db .relay/team.db --host 127.0.0.1 --port 3737
+# Start Handoff
+npx -y @0dust/handoff start
+
+# Invite a teammate
+npx -y @0dust/handoff invite alice
+
+# Teammate joins
+npx -y @0dust/handoff join <invite-link>
+
+# Check setup health
+npx -y @0dust/handoff doctor
 ```
 
-Create a workspace and invite a teammate:
+`start` creates a local Handoff profile, a local SQLite database, a workspace, an admin member, a secure credential file, and a profile-backed MCP command. It does not print member tokens, approval secrets, database paths, workspace IDs, or MCP auth arguments in the normal path.
+
+If you want Handoff to write an MCP config for a supported client, pass an explicit install target:
 
 ```bash
-npx -y @0dust/handoff workspace create \
-  --server-url http://127.0.0.1:3737 \
-  --name "Relay Demo" \
-  --handle sam \
-  --display-name "Sam" \
-  --json
-
-npx -y @0dust/handoff member invite \
-  --server-url http://127.0.0.1:3737 \
-  --token <sam-token> \
-  --workspace <workspace-id> \
-  --handle alice \
-  --json
-
-npx -y @0dust/handoff member accept \
-  --server-url http://127.0.0.1:3737 \
-  --invite <invite-token> \
-  --display-name "Alice" \
-  --json
+# choose the client you use
+npx -y @0dust/handoff start --install-mcp codex
+npx -y @0dust/handoff start --install-mcp cursor
+npx -y @0dust/handoff join <invite-link> --install-mcp codex
+npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
-Workspace creation and invite acceptance return a member `token` and a separate `approval_secret`. Put member tokens in local MCP config or a local secret manager. Keep approval secrets out of MCP config; they are used only by the local approval command.
-
-Then connect the MCP server to your agent.
-
-### Claude Code
-
-Create an MCP config:
-
-```json
-{
-  "mcpServers": {
-    "handoff": {
-      "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--server-url", "http://127.0.0.1:3737"]
-    }
-  }
-}
-```
-
-Start Claude Code with that config:
+Use LAN mode when a teammate joins from another machine on the same network:
 
 ```bash
-claude --mcp-config ./handoff.mcp.json
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
 ```
 
-Now tell Claude Code:
+`invite alice` prints one copyable command:
+
+```bash
+npx -y @0dust/handoff join http://<host>:<port>/invite/<invite-token>
+```
+
+Opening the invite URL in a browser only shows the same join command. The invite is accepted only when the teammate runs `handoff join`.
+
+## Use It From Your Agent
+
+After MCP setup, ask your agent to package the current investigation:
 
 ```text
-Create a Handoff packet for @alice from this session.
-Include the current hypothesis, files and symbols touched, commands run, known failures, evidence excerpts, and the next step I want Alice's agent to continue from.
-Show me the packet and redaction report before sending.
+/share-with @alice
 ```
 
-More setup details: [docs/claude-code-setup.md](docs/claude-code-setup.md).
+or:
+
+```text
+Use Handoff to package the current investigation context for @alice.
+Show me the Relay Packet before sending.
+```
+
+For receiving:
+
+```text
+Use Handoff to check my inbox. Show me the packet before hydration.
+Wait for my approval before calling relay_hydrate.
+```
+
+MCP tools use your active profile by default, so the agent does not need `authToken`, `workspaceId`, member tokens, approval secrets, DB paths, or server URLs in the prompt. Approval secrets are never exposed through MCP.
+
+## MCP Setup
+
+The setup command prints this profile-backed MCP command:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default
+```
+
+Use it in your MCP client config.
+
+`doctor` checks whether Codex, Claude Code, or Cursor config already contains that profile-backed command. If no supported client config is detected, setup can still be healthy, but `doctor` reports a `WARN` with the exact command to add.
 
 ### Codex
 
-Add this to `~/.codex/config.toml` or a trusted project config:
+Codex stores MCP configuration in `~/.codex/config.toml` or trusted project-scoped `.codex/config.toml` files. You can also manage entries with `codex mcp`.
+
+Automatic install for the default global Codex config:
+
+```bash
+npx -y @0dust/handoff start --install-mcp codex
+```
 
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--server-url", "http://127.0.0.1:3737"]
+args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
 ```
 
-Now tell Codex:
+More detail: [docs/codex-setup.md](docs/codex-setup.md).
 
-```text
-Use Handoff to check my inbox.
-Show me any handoff packet before hydration, including evidence, files, commands, confidence, and staleness warnings.
-Wait for my approval before calling relay_hydrate.
-```
+### Claude Code
 
-More setup details: [docs/codex-setup.md](docs/codex-setup.md).
-
-### Any MCP Client
-
-Any MCP client that can launch a stdio subprocess can use Handoff:
+Claude Code can load MCP servers from JSON with `--mcp-config`, and `claude mcp add-json` can install the same stdio server entry.
 
 ```json
 {
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--db", "/absolute/path/to/relay.db"]
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
     }
   }
 }
 ```
 
-More setup details: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
+More detail: [docs/claude-code-setup.md](docs/claude-code-setup.md).
+
+### Cursor
+
+Cursor supports MCP server entries from Settings > Tools & MCP, and can also use JSON config such as `.cursor/mcp.json` or `~/.cursor/mcp.json`.
+
+Automatic install for `~/.cursor/mcp.json`:
+
+```bash
+npx -y @0dust/handoff start --install-mcp cursor
+```
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+    }
+  }
+}
+```
+
+### Generic MCP
+
+Any MCP client that can launch a stdio subprocess can use the same command:
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+    }
+  }
+}
+```
+
+Advanced explicit-auth MCP mode remains available:
+
+```bash
+npx -y @0dust/handoff server mcp --server-url http://127.0.0.1:3737 --explicit-auth
+```
+
+More detail: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
 
 ## Approval Flow
 
-MCP tools can draft, list, view, accept, hydrate, reply, search, and inspect audit receipts. They cannot mint approval tokens.
+Agents can draft, list, view, accept, hydrate, reply, search, and inspect audit receipts. They cannot mint approval tokens.
 
-Generate approval tokens in a local terminal:
+Generate approval tokens in a local terminal. In the normal profile-backed flow, no token or approval secret flags are needed:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <member-token> \
-  --approval-secret <approval-secret> \
-  --action send
-
-npx -y @0dust/handoff approval-token <packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <member-token> \
-  --approval-secret <approval-secret> \
-  --action hydrate
-
-npx -y @0dust/handoff approval-token <reply-packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <member-token> \
-  --approval-secret <approval-secret> \
-  --action reply
+npx -y @0dust/handoff approval-token <packet-id> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
 ```
 
-The command asks for an exact local confirmation phrase and returns a short-lived token. Paste that token back into the agent instruction when you want it to call `relay_approve` or `relay_hydrate`.
+The command asks for an exact local confirmation phrase and returns a short-lived approval token. Paste that token back into the agent instruction when you want it to call `relay_approve` or `relay_hydrate`.
+
+## Local, LAN, And Remote
+
+Local-only setup:
+
+```bash
+npx -y @0dust/handoff start
+```
+
+LAN setup for teammates on the same Wi-Fi:
+
+```bash
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
+```
+
+Remote or self-hosted setup still uses the existing low-level server and explicit flags. Keep that path for automation, custom hosting, and migration work:
+
+- [Advanced manual setup](docs/advanced-manual-setup.md)
+- [Local self-hosting](docs/local-self-hosting.md)
 
 ## Demo
 
-Run the full local handoff flow without any hosted service:
+Run the full local ask/share flow without any hosted service:
 
 ```bash
 npx -y @0dust/handoff demo two-user --db .relay/demo.db
@@ -195,20 +253,6 @@ Expected shape:
 ask handoff   -> closed_resolved
 reply handoff -> hydrated
 share handoff -> archived
-```
-
-For machine-readable output:
-
-```bash
-npx -y @0dust/handoff demo two-user --db .relay/demo-json.db --json
-```
-
-From a local checkout:
-
-```bash
-pnpm install
-pnpm build
-node dist/cli.js demo two-user --db .relay/demo.db
 ```
 
 ## What You Get
@@ -225,15 +269,17 @@ selected session context
 
 | Output                            | Why it matters                                                                   |
 | --------------------------------- | -------------------------------------------------------------------------------- |
-| Relay handoff packet              | The product object is selected context, not a message or raw transcript.         |
+| Relay Packet                      | The product object is selected context, not chat or a raw transcript.            |
 | Claims and evidence fields        | Recipients can judge what was observed, inferred, or still uncertain.            |
-| Files, commands, failures, steps  | The receiving agent can continue the investigation without re-discovery.         |
+| Files, commands, failures, steps  | The receiving agent can continue the investigation without rediscovery.          |
 | Human approval tokens             | Drafting and sending are separate, so an agent cannot silently cross a boundary. |
 | Receiver-controlled hydration     | Nothing enters another agent context until the recipient accepts it.             |
 | Audit and hydration receipts      | Teams can inspect who sent, viewed, accepted, hydrated, replied, and closed.     |
 | Project aliases and typed history | Different clone names can resolve to one project history.                        |
 
 ## MCP Tools
+
+Profile-backed mode hides auth fields from normal tool schemas. Existing `relay_*` names stay stable.
 
 | Tool                            | Purpose                                                                           |
 | ------------------------------- | --------------------------------------------------------------------------------- |
@@ -317,123 +363,24 @@ Full schema notes: [docs/packet-schema.md](docs/packet-schema.md).
 - Raw transcripts are not shared by default.
 - Secret-looking content blocks sending by default.
 - Local absolute paths and oversized excerpts produce warnings.
+- Member tokens and approval secrets are stored outside profile metadata.
+- Credential files are created with restrictive permissions where supported.
+- Approval secrets are not exposed through MCP schemas or config.
 - Packet access is enforced in the service and storage layer, not only in MCP filtering.
-- Workspace admins can inspect audit metadata by default, but not packet bodies unless body access is explicitly enabled.
 - Revoked members cannot authenticate or receive future packets.
 - Notification payloads include summaries, not evidence bodies or raw transcripts.
 
 More detail: [docs/security-privacy.md](docs/security-privacy.md).
 
-## Local Self-Hosting
-
-Run one coordination server on a trusted host:
-
-```bash
-npx -y @0dust/handoff server start --db /srv/handoff/relay.db --host 10.0.0.10 --port 3737
-```
-
-Point each local MCP server at it:
-
-```bash
-npx -y @0dust/handoff server mcp --server-url http://10.0.0.10:3737
-```
-
-Run a terminal watcher:
-
-```bash
-npx -y @0dust/handoff watch \
-  --server-url http://10.0.0.10:3737 \
-  --token <member-token> \
-  --workspace <workspace-id>
-```
-
-Add native desktop notifications or a webhook:
-
-```bash
-npx -y @0dust/handoff watch \
-  --server-url http://10.0.0.10:3737 \
-  --token <member-token> \
-  --workspace <workspace-id> \
-  --desktop-notifications
-
-npx -y @0dust/handoff watch \
-  --server-url http://10.0.0.10:3737 \
-  --token <member-token> \
-  --workspace <workspace-id> \
-  --webhook-url https://hooks.example.test/relay
-```
-
-More detail: [docs/local-self-hosting.md](docs/local-self-hosting.md).
-
-## CLI Happy Path
-
-Create a context handoff and approve it:
-
-```bash
-npx -y @0dust/handoff share-with @alice \
-  --server-url http://127.0.0.1:3737 \
-  --token <sam-token> \
-  --workspace <workspace-id> \
-  --title "Auth refresh handoff" \
-  --summary "The retry path still returns 401 after refresh-token rotation." \
-  --finding "The retry path appears to skip persistence before the second request." \
-  --source-client codex \
-  --evidence-json '[{"kind":"test_failure","label":"test output","source":"pnpm test auth-refresh","excerpt":"expected 200 received 401"}]' \
-  --files src/auth/refresh.ts,refreshSession \
-  --tests "pnpm test auth-refresh" \
-  --tried "Checked token expiry math,Re-ran the refresh integration test" \
-  --hypothesis "Refresh persistence ordering issue." \
-  --json
-
-npx -y @0dust/handoff approval-token <handoff-packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <sam-token> \
-  --approval-secret <sam-approval-secret> \
-  --action send \
-  --json
-
-npx -y @0dust/handoff approve <handoff-packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <sam-token> \
-  --approval-token <send-approval-token> \
-  --json
-```
-
-Review and hydrate:
-
-```bash
-npx -y @0dust/handoff inbox --server-url http://127.0.0.1:3737 --token <alice-token> --workspace <workspace-id> --json
-npx -y @0dust/handoff view <handoff-packet-id> --server-url http://127.0.0.1:3737 --token <alice-token> --json
-npx -y @0dust/handoff accept <handoff-packet-id> --server-url http://127.0.0.1:3737 --token <alice-token> --json
-npx -y @0dust/handoff hydrate <handoff-packet-id> --server-url http://127.0.0.1:3737 --token <alice-token> --client claude-code --approval-token <hydrate-approval-token>
-```
-
-If the handoff includes a question, the recipient can draft and approve a reply:
-
-```bash
-npx -y @0dust/handoff reply <ask-packet-id> "Persist the rotated refresh token before retrying." \
-  --server-url http://127.0.0.1:3737 \
-  --token <alice-token> \
-  --summary "Likely refresh persistence ordering issue." \
-  --source-client claude-code \
-  --json
-
-npx -y @0dust/handoff approve <reply-packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <alice-token> \
-  --approval-token <reply-approval-token> \
-  --json
-
-npx -y @0dust/handoff close <ask-packet-id> \
-  --server-url http://127.0.0.1:3737 \
-  --token <sam-token> \
-  --resolution resolved \
-  --json
-```
-
 ## Commands
 
 ```bash
+handoff start
+handoff invite
+handoff join
+handoff doctor
+handoff server start
+handoff server mcp
 handoff workspace create
 handoff member invite
 handoff member accept
@@ -441,8 +388,6 @@ handoff member rotate-token
 handoff member rotate-approval-secret
 handoff workspace alias set
 handoff workspace alias list
-handoff server start
-handoff server mcp
 handoff ask
 handoff share-with
 handoff update-draft
@@ -467,9 +412,10 @@ handoff demo two-user
 
 ## Docs
 
-- [Claude Code setup](docs/claude-code-setup.md)
 - [Codex setup](docs/codex-setup.md)
+- [Claude Code setup](docs/claude-code-setup.md)
 - [Generic MCP setup](docs/generic-mcp-setup.md)
+- [Advanced manual setup](docs/advanced-manual-setup.md)
 - [Local self-hosting](docs/local-self-hosting.md)
 - [Packet schema](docs/packet-schema.md)
 - [Security and privacy model](docs/security-privacy.md)
@@ -497,7 +443,7 @@ pnpm demo
 npm pack --dry-run
 ```
 
-The package ships `dist`, top-level docs, examples, fixtures, and this README. Development-only planning files are excluded from the npm package.
+The package ships `dist`, top-level docs, examples, fixtures, and this README.
 
 ## Current Limits
 

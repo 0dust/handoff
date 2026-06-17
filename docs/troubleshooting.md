@@ -1,5 +1,42 @@
 # Troubleshooting
 
+## Start With Doctor
+
+Run:
+
+```bash
+npx -y @0dust/handoff doctor
+npx -y @0dust/handoff doctor --json
+```
+
+Doctor checks the Handoff home directory, active profile, credential file permissions, member token, approval secret, server reachability, workspace access, and the profile-backed MCP command.
+
+If the profile is missing, run:
+
+```bash
+npx -y @0dust/handoff start
+```
+
+If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config:
+
+```bash
+npx -y @0dust/handoff start --install-mcp codex
+npx -y @0dust/handoff start --install-mcp cursor
+```
+
+For Claude Code or another MCP client, add the printed profile-backed command:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default
+```
+
+If a teammate cannot join from another machine, restart the host in LAN mode and send a fresh invite:
+
+```bash
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
+```
+
 ## `better-sqlite3` Cannot Find Native Bindings
 
 Run:
@@ -16,11 +53,12 @@ This package includes `pnpm-workspace.yaml` with `onlyBuiltDependencies` for `be
 - Run the command directly:
 
   ```bash
-  node dist/cli.js server mcp --db .relay/team.db
+  npx -y @0dust/handoff server mcp --profile default
   ```
 
 - In Claude Code, check `/mcp` or start with `--mcp-config`.
 - In Codex, confirm the trusted `config.toml` has the expected `mcp_servers.<id>.command` and `args`.
+- Confirm the MCP args use `--profile default` unless you intentionally need `--explicit-auth`.
 
 ## Redaction Blocks A Packet
 
@@ -46,8 +84,8 @@ Check:
 Use:
 
 ```bash
-node dist/cli.js member list --db .relay/team.db --token <admin-token> --workspace <workspace-id>
-node dist/cli.js status <packet-id> --db .relay/team.db --token <sender-token>
+npx -y @0dust/handoff member list --db .relay/team.db --token <admin-token> --workspace <workspace-id>
+npx -y @0dust/handoff status <packet-id> --db .relay/team.db --token <sender-token>
 ```
 
 ## Hydration Is Rejected
@@ -63,21 +101,29 @@ Missing, expired, reused, or wrong-action approval tokens return `FORBIDDEN`.
 
 If `/packets/:packetId/approval-token` returns `FORBIDDEN` with an approval secret message, use the CLI `approval-token` command with the approval secret returned during setup/acceptance. Static local-renderer headers are ignored.
 
+In profile-backed mode:
+
 ```bash
-node dist/cli.js approval-token <packet-id> --db .relay/team.db --token <member-token> --approval-secret <approval-secret> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action send
+```
+
+In explicit advanced mode:
+
+```bash
+npx -y @0dust/handoff approval-token <packet-id> --db .relay/team.db --token <member-token> --approval-secret <approval-secret> --action send
 ```
 
 For audit/debugging:
 
 ```bash
-node dist/cli.js history --db .relay/team.db --token <member-token> --workspace <workspace-id> --filter open
-node dist/cli.js audit --db .relay/team.db --token <admin-token> --workspace <workspace-id>
+npx -y @0dust/handoff history --db .relay/team.db --token <member-token> --workspace <workspace-id> --filter open
+npx -y @0dust/handoff audit --db .relay/team.db --token <admin-token> --workspace <workspace-id>
 ```
 
 If an approval secret leaks, rotate it and update your local secret manager:
 
 ```bash
-node dist/cli.js member rotate-approval-secret --db .relay/team.db --token <member-token> --approval-secret <current-approval-secret> --json
+npx -y @0dust/handoff member rotate-approval-secret --db .relay/team.db --token <member-token> --approval-secret <current-approval-secret> --json
 ```
 
 The old approval secret stops working immediately, and unconsumed approval tokens already minted by that member are invalidated. If you no longer have the current approval secret, ask a workspace admin to revoke and reinvite the member.
@@ -87,7 +133,7 @@ The old approval secret stops working immediately, and unconsumed approval token
 Recipients can ask for clarification before hydration:
 
 ```bash
-node dist/cli.js clarify <packet-id> --db .relay/team.db --token <recipient-token> --question "Can you include the failing assertion?" --requested-evidence "test failure"
+npx -y @0dust/handoff clarify <packet-id> --db .relay/team.db --token <recipient-token> --question "Can you include the failing assertion?" --requested-evidence "test failure"
 ```
 
 ## Watcher Prints Nothing
@@ -95,7 +141,7 @@ node dist/cli.js clarify <packet-id> --db .relay/team.db --token <recipient-toke
 The watcher only reports new packet ids once per process. Check `inbox` directly:
 
 ```bash
-node dist/cli.js inbox --db .relay/team.db --token <token> --workspace <workspace-id>
+npx -y @0dust/handoff inbox --db .relay/team.db --token <token> --workspace <workspace-id>
 ```
 
 ## Desktop Or Webhook Notifications Do Not Fire
@@ -109,7 +155,7 @@ Desktop notifications are best-effort from the local watcher process:
 Webhook notifications require a reachable endpoint that accepts JSON POSTs:
 
 ```bash
-node dist/cli.js watch --db .relay/team.db --token <token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay --once
+npx -y @0dust/handoff watch --db .relay/team.db --token <token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay --once
 ```
 
 If the adapter fails, `watch` still prints the terminal notification and writes an adapter warning to stderr.

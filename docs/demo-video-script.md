@@ -21,7 +21,7 @@ rm -f .relay/demo-video.db .relay/demo-video.db-shm .relay/demo-video.db-wal
 2. Run the full local demo:
 
    ```bash
-   node dist/cli.js demo two-user --db .relay/demo-video.db --json
+   npx -y @0dust/handoff demo two-user --db .relay/demo-video.db --json
    ```
 
 3. Point out the shape of the output:
@@ -34,14 +34,14 @@ rm -f .relay/demo-video.db .relay/demo-video.db-shm .relay/demo-video.db-wal
 4. Show the watcher notification command users run in a second terminal:
 
    ```bash
-   node dist/cli.js watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --once
+   npx -y @0dust/handoff watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --once
    ```
 
 5. Show optional native desktop and webhook notification flags:
 
    ```bash
-   node dist/cli.js watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --desktop-notifications
-   node dist/cli.js watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay
+   npx -y @0dust/handoff watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --desktop-notifications
+   npx -y @0dust/handoff watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay
    ```
 
 ## Closing Line
