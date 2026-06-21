@@ -2,67 +2,33 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { Command, CommanderError } from 'commander';
+import { Command, CommanderError, type OutputConfiguration } from 'commander';
 
 import { confirmLocalApproval } from './approval.js';
 import { RelayApiClient } from './api/client.js';
-import { startApiServer } from './api/server.js';
+import { registerDemoCommands } from './cli/demo-commands.js';
+import { registerServerCommands } from './cli/server-commands.js';
+import { registerSetupCommands } from './cli/setup-commands.js';
+import {
+  addCommonOptions,
+  closeBackend,
+  createBackend,
+  defaultIo,
+  write,
+  type CliBackend,
+  type CliIo,
+  type CommonOptions,
+} from './cli/shared.js';
 import { isRelayError } from './errors.js';
-import { startMcpServer } from './mcp/server.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
 import type { RelayPacket } from './protocol/schema.js';
-import { RelayService } from './service/relay-service.js';
-import { formatDoctorHuman, runDoctorChecks } from './setup/doctor.js';
-import {
-  createBackendForProfile,
-  createInviteForProfile,
-  joinInvite,
-  startHandoffSetup,
-} from './setup/orchestrator.js';
+import { createBackendForProfile } from './setup/orchestrator.js';
 import { createProfileStore, resolveProfileName } from './setup/profile.js';
-import { createRelayDatabase } from './storage/database.js';
 
 export interface CliRunResult {
   stdout: string;
   stderr: string;
   code: number;
-}
-
-interface CliIo {
-  writeOut(chunk: string): void;
-  writeErr(chunk: string): void;
-}
-
-interface CommonOptions {
-  db?: string;
-  json?: boolean;
-  profile?: string;
-  serverUrl?: string;
-  token?: string;
-  workspace?: string;
-}
-
-const defaultIo: CliIo = {
-  writeOut: (chunk) => process.stdout.write(chunk),
-  writeErr: (chunk) => process.stderr.write(chunk),
-};
-
-type CliBackend = RelayService | RelayApiClient;
-type InstallableMcpClient = 'codex' | 'cursor';
-
-function createBackend(options: CommonOptions): CliBackend {
-  if (options.serverUrl) {
-    return new RelayApiClient({ serverUrl: options.serverUrl });
-  }
-  return new RelayService(
-    createRelayDatabase(options.db ?? process.env.AGENT_RELAY_DB ?? '.relay/relay.db'),
-  );
-}
-
-function closeBackend(backend: CliBackend): void {
-  if (backend instanceof RelayService) {
-    backend.close();
-  }
 }
 
 function createProfileBackend(options: CommonOptions): {
@@ -139,18 +105,6 @@ function createAuthContext(
   };
 }
 
-function write(io: CliIo, value: unknown, json?: boolean): void {
-  if (json) {
-    io.writeOut(`${JSON.stringify(value)}\n`);
-    return;
-  }
-  if (typeof value === 'string') {
-    io.writeOut(`${value}\n`);
-    return;
-  }
-  io.writeOut(`${JSON.stringify(value, null, 2)}\n`);
-}
-
 function hasJsonFlag(argv: string[]): boolean {
   return argv.includes('--json');
 }
@@ -179,112 +133,6 @@ function formatCliError(error: unknown, json: boolean): string {
     return `${JSON.stringify(payload)}\n`;
   }
   return `[${payload.error.code}] ${payload.error.message}\n`;
-}
-
-function parseInstallMcpClient(value: string | undefined): InstallableMcpClient | undefined {
-  if (!value) return undefined;
-  if (value === 'codex' || value === 'cursor') return value;
-  throw new Error('Unsupported MCP client. Use --install-mcp codex or --install-mcp cursor.');
-}
-
-function startOutput(result: Awaited<ReturnType<typeof startHandoffSetup>>) {
-  return {
-    profile: result.profile.profileName,
-    handle: result.profile.handle,
-    workspaceName: result.profile.workspaceName,
-    serverUrl: result.profile.serverUrl,
-    publicInviteBaseUrl: result.profile.publicInviteBaseUrl,
-    serverStatus: result.server.status,
-    mcp: result.mcp,
-    nextCommand: result.nextCommand,
-    warning: result.server.warning,
-  };
-}
-
-function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>): string {
-  const lines = [
-    result.created ? 'Handoff setup created.' : 'Handoff setup is ready.',
-    `Profile: ${result.profile.profileName}`,
-    `Handle: @${result.profile.handle}`,
-    `Workspace: ${result.profile.workspaceName}`,
-    `Server: ${result.profile.serverUrl}`,
-  ];
-  if (result.profile.publicInviteBaseUrl) {
-    lines.push(`Invite URL: ${result.profile.publicInviteBaseUrl}`);
-  }
-  if (result.server.warning) {
-    lines.push(`Warning: ${result.server.warning}`);
-  }
-  lines.push('', ...formatMcpSetupHuman(result.mcp), '', 'Next:', result.nextCommand);
-  return lines.join('\n');
-}
-
-function formatInviteHuman(result: Awaited<ReturnType<typeof createInviteForProfile>>): string {
-  const lines = [
-    `Invite ready for @${result.handle}.`,
-    `Expires: ${result.expiresAt}`,
-    '',
-    result.joinCommand,
-    '',
-    result.inviteLink,
-  ];
-  if (result.warning) lines.push('', `Warning: ${result.warning}`);
-  return lines.join('\n');
-}
-
-function joinOutput(result: Awaited<ReturnType<typeof joinInvite>>) {
-  return {
-    profile: result.profile.profileName,
-    handle: result.profile.handle,
-    workspaceName: result.profile.workspaceName,
-    serverUrl: result.profile.serverUrl,
-    mcp: result.mcp,
-    nextAgentInstruction: result.nextAgentInstruction,
-  };
-}
-
-function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string {
-  return [
-    `Joined ${result.profile.workspaceName} as @${result.profile.handle}.`,
-    `Profile: ${result.profile.profileName}`,
-    `Server: ${result.profile.serverUrl}`,
-    '',
-    ...formatMcpSetupHuman(result.mcp),
-    '',
-    'Agent prompt:',
-    result.nextAgentInstruction,
-  ].join('\n');
-}
-
-function formatMcpSetupHuman(mcp: Awaited<ReturnType<typeof startHandoffSetup>>['mcp']): string[] {
-  const lines = ['MCP setup:', `Command: ${mcp.command}`];
-  const installed = mcp.configs.filter((config) => config.installed);
-  if (installed.length > 0) {
-    lines.push(`Detected: ${installed.map((config) => config.client).join(', ')}`);
-    return lines;
-  }
-  if (mcp.status === 'skipped') {
-    lines.push('Status: skipped.');
-    return lines;
-  } else {
-    lines.push('Status: not detected in Codex, Claude Code, or Cursor config yet.');
-  }
-  lines.push('Install for Codex: npx -y @0dust/handoff start --install-mcp codex');
-  lines.push('Install for Cursor: npx -y @0dust/handoff start --install-mcp cursor');
-  lines.push(
-    `Claude Code: ${
-      mcp.installCommands.find((command) => command.startsWith('claude ')) ??
-      'add the command above with claude mcp add-json'
-    }`,
-  );
-  return lines;
-}
-
-function addCommonOptions(command: Command): Command {
-  return command
-    .option('--db <path>', 'SQLite database path')
-    .option('--server-url <url>', 'Relay coordination API URL')
-    .option('--json', 'Print JSON output');
 }
 
 function parseJsonOption(value: string | undefined): any[] | undefined {
@@ -344,103 +192,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     .description('Human-approved handoffs between coding agents.')
     .version('0.1.0');
 
-  program
-    .command('start')
-    .description('Create or reuse a frictionless Handoff profile and local server')
-    .option('--lan', 'Prepare LAN-reachable invite links')
-    .option('--profile <name>', 'Profile name')
-    .option('--handle <handle>', 'Local member handle')
-    .option('--display-name <name>', 'Local display name')
-    .option('--workspace-name <name>', 'Workspace name')
-    .option('--host <host>', 'Server bind host')
-    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
-    .option('--port <port>', 'Server port')
-    .option('--public-url <url>', 'Public invite base URL')
-    .option('--no-mcp-install', 'Do not offer automatic MCP setup')
-    .option('--json', 'Print JSON output')
-    .action(
-      async (
-        options: CommonOptions & {
-          displayName?: string;
-          handle?: string;
-          host?: string;
-          installMcp?: 'codex' | 'cursor';
-          lan?: boolean;
-          mcpInstall?: boolean;
-          port?: string;
-          publicUrl?: string;
-          workspaceName?: string;
-        },
-      ) => {
-        const result = await startHandoffSetup({
-          displayName: options.displayName,
-          handle: options.handle,
-          host: options.host,
-          installMcpClient: parseInstallMcpClient(options.installMcp),
-          lan: options.lan,
-          noMcpInstall: options.mcpInstall === false,
-          port: options.port ? Number(options.port) : undefined,
-          profileName: options.profile,
-          publicUrl: options.publicUrl,
-          workspaceName: options.workspaceName,
-        });
-        write(io, options.json ? startOutput(result) : formatStartHuman(result), options.json);
-      },
-    );
-
-  program
-    .command('invite')
-    .description('Invite a teammate with the active Handoff profile')
-    .argument('<handle>', '@handle to invite')
-    .option('--profile <name>', 'Profile name')
-    .option('--expires-in <duration>', 'Reserved for future invite durations')
-    .option('--json', 'Print JSON output')
-    .action(async (handle: string, options: CommonOptions) => {
-      const result = await createInviteForProfile({ handle, profileName: options.profile });
-      write(io, options.json ? result : formatInviteHuman(result), options.json);
-    });
-
-  program
-    .command('join')
-    .description('Join a Handoff workspace from an invite link')
-    .argument('<invite>', 'Invite URL or raw invite token with --server-url')
-    .option('--profile <name>', 'Profile name')
-    .option('--display-name <name>', 'Display name')
-    .option('--server-url <url>', 'Server URL for raw invite tokens')
-    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
-    .option('--no-mcp-install', 'Do not offer automatic MCP setup')
-    .option('--json', 'Print JSON output')
-    .action(
-      async (
-        invite: string,
-        options: CommonOptions & {
-          displayName?: string;
-          installMcp?: string;
-          mcpInstall?: boolean;
-        },
-      ) => {
-        const result = await joinInvite({
-          displayName: options.displayName,
-          installMcpClient: parseInstallMcpClient(options.installMcp),
-          invite,
-          noMcpInstall: options.mcpInstall === false,
-          profileName: options.profile,
-          serverUrl: options.serverUrl,
-        });
-        write(io, options.json ? joinOutput(result) : formatJoinHuman(result), options.json);
-      },
-    );
-
-  program
-    .command('doctor')
-    .description('Diagnose Handoff setup health')
-    .option('--profile <name>', 'Profile name')
-    .option('--fix', 'Repair safe local issues')
-    .option('--json', 'Print JSON output')
-    .action(async (options: CommonOptions & { fix?: boolean }) => {
-      const report = await runDoctorChecks({ fix: options.fix, profileName: options.profile });
-      write(io, options.json ? report : formatDoctorHuman(report), options.json);
-    });
+  registerSetupCommands(program, { io });
 
   const workspace = program.command('workspace').description('Workspace setup flows');
   addCommonOptions(
@@ -1048,192 +800,8 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     },
   );
 
-  const server = program.command('server').description('Coordination and MCP servers');
-  addCommonOptions(
-    server
-      .command('start')
-      .option('--host <host>', 'Host', '127.0.0.1')
-      .option('--port <port>', 'Port', '3737'),
-  ).action(async (options: CommonOptions & { host: string; port: string }) => {
-    await startApiServer({
-      dbPath: options.db ?? '.relay/relay.db',
-      host: options.host,
-      port: Number(options.port),
-    });
-    io.writeErr(
-      `Handoff coordination server listening on http://${options.host}:${options.port}\n`,
-    );
-  });
-  addCommonOptions(
-    server
-      .command('mcp')
-      .option('--profile <name>', 'Use a stored Handoff profile')
-      .option('--explicit-auth', 'Expose authToken and workspaceId in MCP schemas'),
-  ).action(async (options: CommonOptions & { explicitAuth?: boolean }) => {
-    await startMcpServer({
-      dbPath: options.db ?? '.relay/relay.db',
-      explicitAuth: options.explicitAuth,
-      profileName: options.profile,
-      serverUrl: options.serverUrl,
-    });
-  });
-
-  const demo = program.command('demo').description('Local demos');
-  addCommonOptions(demo.command('two-user')).action(async (options: CommonOptions) => {
-    const service = createBackend(options);
-    const workspace = await service.createWorkspace({
-      name: 'Handoff Demo',
-      adminHandle: 'sam',
-      adminName: 'Sam Sender',
-    });
-    const invite = await service.inviteMember({
-      adminToken: workspace.admin.token,
-      workspaceId: workspace.workspace.id,
-      handle: 'alice',
-    });
-    const alice = await service.acceptInvite({
-      inviteToken: invite.invite.token,
-      displayName: 'Alice Recipient',
-    });
-    const ask = await service.createAskDraft({
-      authToken: workspace.admin.token,
-      workspaceId: workspace.workspace.id,
-      to: '@alice',
-      question: 'Can you check why the auth refresh test keeps failing?',
-      title: 'Auth refresh failing',
-      summary: 'The auth refresh integration test returns 401 after token rotation.',
-      sourceClient: 'codex',
-      evidence: [
-        {
-          kind: 'test_failure',
-          label: 'test output',
-          source: 'pnpm test auth-refresh',
-          excerpt: 'expected 200 received 401',
-        },
-      ],
-    });
-    const askSendApproval = await service.createApprovalToken({
-      authToken: workspace.admin.token,
-      approvalSecret: workspace.admin.approval_secret,
-      packetId: ask.id,
-      action: 'send',
-    });
-    await service.approveAndSend({
-      authToken: workspace.admin.token,
-      packetId: ask.id,
-      approvalToken: askSendApproval.approval_token,
-    });
-    await service.viewPacket({ authToken: alice.member.token, packetId: ask.id });
-    await service.acceptPacket({ authToken: alice.member.token, packetId: ask.id });
-    const askHydrateApproval = await service.createApprovalToken({
-      authToken: alice.member.token,
-      approvalSecret: alice.member.approval_secret,
-      packetId: ask.id,
-      action: 'hydrate',
-    });
-    await service.hydratePacket({
-      authToken: alice.member.token,
-      packetId: ask.id,
-      client: 'codex',
-      approvalToken: askHydrateApproval.approval_token,
-    });
-    const reply = await service.createReplyDraft({
-      authToken: alice.member.token,
-      packetId: ask.id,
-      answer: 'Persist the rotated refresh token before retrying the request.',
-      summary: 'Likely refresh persistence ordering issue.',
-      sourceClient: 'codex',
-    });
-    const replyApproval = await service.createApprovalToken({
-      authToken: alice.member.token,
-      approvalSecret: alice.member.approval_secret,
-      packetId: reply.id,
-      action: 'reply',
-    });
-    await service.approveReply({
-      authToken: alice.member.token,
-      replyPacketId: reply.id,
-      approvalToken: replyApproval.approval_token,
-    });
-    await service.viewPacket({
-      authToken: workspace.admin.token,
-      packetId: reply.id,
-    });
-    const replyHydrateApproval = await service.createApprovalToken({
-      authToken: workspace.admin.token,
-      approvalSecret: workspace.admin.approval_secret,
-      packetId: reply.id,
-      action: 'hydrate',
-    });
-    await service.hydratePacket({
-      authToken: workspace.admin.token,
-      packetId: reply.id,
-      client: 'codex',
-      approvalToken: replyHydrateApproval.approval_token,
-    });
-    const closed = await service.closePacket({
-      authToken: workspace.admin.token,
-      packetId: ask.id,
-      resolution: 'resolved',
-    });
-
-    const share = await service.createShareDraft({
-      authToken: workspace.admin.token,
-      workspaceId: workspace.workspace.id,
-      to: '@alice',
-      finding: 'The auth middleware retry path skips refresh persistence.',
-      title: 'Auth middleware finding',
-      summary: 'Patch retry persistence before the second request.',
-      sourceClient: 'codex',
-    });
-    const shareSendApproval = await service.createApprovalToken({
-      authToken: workspace.admin.token,
-      approvalSecret: workspace.admin.approval_secret,
-      packetId: share.id,
-      action: 'send',
-    });
-    await service.approveAndSend({
-      authToken: workspace.admin.token,
-      packetId: share.id,
-      approvalToken: shareSendApproval.approval_token,
-    });
-    await service.viewPacket({ authToken: alice.member.token, packetId: share.id });
-    await service.acceptPacket({ authToken: alice.member.token, packetId: share.id });
-    const shareHydrateApproval = await service.createApprovalToken({
-      authToken: alice.member.token,
-      approvalSecret: alice.member.approval_secret,
-      packetId: share.id,
-      action: 'hydrate',
-    });
-    await service.hydratePacket({
-      authToken: alice.member.token,
-      packetId: share.id,
-      client: 'codex',
-      approvalToken: shareHydrateApproval.approval_token,
-    });
-    const archived = await service.archivePacket({
-      authToken: alice.member.token,
-      packetId: share.id,
-    });
-    const hydratedReply = await service.getPacketForMember({
-      authToken: workspace.admin.token,
-      packetId: reply.id,
-    });
-    closeBackend(service);
-
-    write(
-      io,
-      {
-        workspace: workspace.workspace,
-        sender: workspace.admin,
-        recipient: alice.member,
-        ask: closed.packet,
-        reply: hydratedReply.packet,
-        share: archived.packet,
-      },
-      options.json,
-    );
-  });
+  registerServerCommands(program, { io });
+  registerDemoCommands(program, { io });
 
   return program;
 }
@@ -1241,23 +809,20 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
 export async function runCli(argv: string[]): Promise<CliRunResult> {
   let stdout = '';
   let stderr = '';
-  const program = buildCliProgram({
-    writeOut: (chunk) => {
+  const output = {
+    writeOut: (chunk: string) => {
       stdout += chunk;
     },
-    writeErr: (chunk) => {
+    writeErr: (chunk: string) => {
       stderr += chunk;
     },
+  };
+  const program = buildCliProgram({
+    writeOut: output.writeOut,
+    writeErr: output.writeErr,
   });
   program.exitOverride();
-  program.configureOutput({
-    writeOut: (chunk) => {
-      stdout += chunk;
-    },
-    writeErr: (chunk) => {
-      stderr += chunk;
-    },
-  });
+  configureOutputRecursively(program, output);
 
   try {
     await program.parseAsync(argv, { from: 'user' });
@@ -1267,6 +832,16 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
       return { stdout, stderr, code: error.exitCode };
     }
     return { stdout, stderr: stderr + formatCliError(error, hasJsonFlag(argv)), code: 1 };
+  }
+}
+
+function configureOutputRecursively(
+  command: Command,
+  output: OutputConfiguration,
+): void {
+  command.configureOutput(output);
+  for (const subcommand of command.commands) {
+    configureOutputRecursively(subcommand, output);
   }
 }
 

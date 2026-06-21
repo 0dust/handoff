@@ -678,6 +678,14 @@ describe('CLI and watcher', () => {
     expect(parsed.ask.status).toBe('closed_resolved');
     expect(parsed.reply.status).toBe('hydrated');
     expect(parsed.share.status).toBe('archived');
+    expect(parsed.sender.token).toBe('[redacted]');
+    expect(parsed.sender.approval_secret).toBe('[redacted]');
+    expect(parsed.sender.credentials_redacted).toBe(true);
+    expect(parsed.recipient.token).toBe('[redacted]');
+    expect(parsed.recipient.approval_secret).toBe('[redacted]');
+    expect(parsed.recipient.credentials_redacted).toBe(true);
+    expect(result.stdout).not.toContain('relay_member_');
+    expect(result.stdout).not.toContain('relay_approval_secret_');
   });
 
   test('launch assets include a short-video recording demo script', () => {

@@ -25,7 +25,7 @@ rm -f .relay/demo-video.db .relay/demo-video.db-shm .relay/demo-video.db-wal
    ```
 
 3. Point out the shape of the output:
-   - workspace-scoped members with separate `token` and `approval_secret`
+   - workspace-scoped member identities without raw tokens or approval secrets
    - ask status ending in `closed_resolved`
    - reply status ending in `hydrated`
    - share status ending in `archived`
