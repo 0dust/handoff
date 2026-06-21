@@ -69,7 +69,7 @@ Include files touched, commands run, known failures, current hypothesis, evidenc
 Draft only. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
 ```
 
-Before Claude calls `relay_approve`, generate a human approval token in a terminal:
+In strict mode, before Claude calls `relay_approve`, generate a human approval token in a terminal:
 
 ```bash
 npx -y @0dust/handoff approval-token <packet-id> --action send
@@ -89,6 +89,14 @@ npx -y @0dust/handoff approval-token <packet-id> --action hydrate
 ```
 
 Approval-token minting is deliberately outside MCP so Claude cannot draft and approve a packet with only a member token. Keep approval secrets out of MCP config.
+
+For a smoother local workflow, profile-backed MCP can opt into agent-confirmed approvals:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default --agent-approvals
+```
+
+With that flag, Claude may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; remote profiles send the approval secret to that server API. Approval secrets still stay out of Claude config and tool schemas.
 
 ## Remote Or Self-Hosted
 

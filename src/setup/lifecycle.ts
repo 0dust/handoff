@@ -1,13 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {
-  closeSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -307,7 +300,11 @@ async function inspectRecordedServerIdentity(
     if (!metadata.serverId && health.pid === metadata.pid) {
       return { identity: 'legacy_match', reachable: true };
     }
-    if (metadata.serverId && health.pid === metadata.pid && health.server_id === metadata.serverId) {
+    if (
+      metadata.serverId &&
+      health.pid === metadata.pid &&
+      health.server_id === metadata.serverId
+    ) {
       return { identity: 'matched', reachable: true };
     }
     return { identity: 'mismatch', reachable: false };

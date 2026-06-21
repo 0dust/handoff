@@ -92,12 +92,20 @@ npx -y @0dust/handoff workspace alias list \
 
 ## Approval Tokens
 
-Profile-backed approval tokens use the local profile:
+Strict profile-backed approval tokens use the local profile:
 
 ```bash
 npx -y @0dust/handoff approval-token <packet-id> --action send
 npx -y @0dust/handoff approval-token <packet-id> --action hydrate
 ```
+
+Profile-backed MCP can opt into agent-confirmed approvals:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default --agent-approvals
+```
+
+In that mode, the MCP process requests and consumes the same short-lived approval tokens through the configured Handoff backend after the agent shows the packet and you explicitly tell it to send, approve, or hydrate. Local database profiles keep that request local; remote/self-hosted profiles send the approval secret to the configured Handoff server API.
 
 Explicit approval-token mode remains available:
 

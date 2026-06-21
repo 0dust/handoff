@@ -21,7 +21,9 @@ Raw transcripts are not captured or shared by default.
 - Recipient reviews and approves replies before return.
 - Sender views replies and hydrates them explicitly.
 
-The service rejects invalid state transitions, and send/reply/hydrate actions require a short-lived human approval token generated outside MCP. Approval-token minting requires both the member token and a separate per-member approval secret returned during setup/acceptance, plus the local CLI confirmation prompt. A member token alone cannot mint approval tokens.
+The service rejects invalid state transitions, and send/reply/hydrate actions require a short-lived human approval token. Strict mode generates that token outside MCP through the local CLI confirmation prompt. Agent-confirmed mode is an opt-in profile-backed MCP mode where the MCP process can request the same short-lived token through the configured Handoff backend after the agent shows the packet and the user explicitly tells it to send, approve, or hydrate. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API.
+
+Approval-token minting requires both the member token and a separate per-member approval secret returned during setup/acceptance. A member token alone cannot mint approval tokens. Agent-confirmed mode does not cryptographically prove a fresh terminal phrase; it treats explicit instruction in the active local agent session as the approval event.
 
 ## Redaction
 
@@ -81,7 +83,7 @@ Receipts avoid logging extra raw sensitive evidence beyond the approved packet b
 ## Operational Notes
 
 - Treat `.relay/*.db` as sensitive. It contains packet bodies, member token hashes, audit metadata, and hydration receipts.
-- Treat approval secrets like local signing material. Keep them out of MCP config and committed files; store them in a human-controlled terminal secret manager or pass them only to `approval-token`.
+- Treat approval secrets like local signing material. Keep them out of MCP config, tool schemas, and committed files. Strict mode uses them through `approval-token`; agent-confirmed mode lets the local profile-backed MCP process load them without exposing them to the agent as arguments.
 - Rotate approval secrets with `member rotate-approval-secret` if one appears in shell history, terminal logs, or copied demo output. Rotation requires the current approval secret, returns the replacement once, invalidates unconsumed approval tokens minted by that member, and records `rotate_approval_secret`.
 - Back up the SQLite database like any local coordination data store.
 - Prefer private network access or localhost-only binding for the Fastify coordination server.

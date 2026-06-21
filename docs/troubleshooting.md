@@ -99,9 +99,9 @@ npx -y @0dust/handoff member list --db .relay/team.db --token <admin-token> --wo
 npx -y @0dust/handoff status <packet-id> --db .relay/team.db --token <sender-token>
 ```
 
-## Hydration Is Rejected
+## Hydration Or Approval Is Rejected
 
-Hydration requires explicit review and a human approval token:
+Strict mode requires explicit review and a human approval token:
 
 - Ask/share packets: recipient must `view`, then `accept`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
 - Reply packets: sender must `view`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
@@ -109,6 +109,14 @@ Hydration requires explicit review and a human approval token:
 Invalid transitions return `INVALID_STATE_TRANSITION`.
 
 Missing, expired, reused, or wrong-action approval tokens return `FORBIDDEN`.
+
+If you intended to use agent-confirmed approvals, confirm your MCP command includes profile mode and `--agent-approvals`:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default --agent-approvals
+```
+
+Agent-confirmed approvals are not available in explicit-auth MCP mode or when the local profile credentials are missing.
 
 If `/packets/:packetId/approval-token` returns `FORBIDDEN` with an approval secret message, use the CLI `approval-token` command with the approval secret returned during setup/acceptance. Static local-renderer headers are ignored.
 
