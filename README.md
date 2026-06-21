@@ -47,20 +47,22 @@ Sam's Codex session
 No global install is required.
 
 ```bash
-# Start Handoff
+# On your machine: create the workspace and local server
 npx -y @0dust/handoff start
 
-# Invite a teammate
+# On your machine: invite a teammate
 npx -y @0dust/handoff invite alice
 
-# Teammate joins
+# On Alice's machine: accept the invite and create her local profile
 npx -y @0dust/handoff join <invite-link>
 
-# Check setup health
+# On each machine: check setup health
 npx -y @0dust/handoff doctor
 ```
 
 `start` creates a local Handoff profile, a local SQLite database, a workspace, an admin member, a secure credential file, and a profile-backed MCP command. It does not print member tokens, approval secrets, database paths, workspace IDs, or MCP auth arguments in the normal path.
+
+Alice does not run `start` for your workspace. She needs Node 20+ with `npx`, the invite link/command you send her, and network access to the Handoff server URL inside that invite. `join` is her setup step: it accepts the invite, creates her local profile, stores her member credentials, and prints the MCP command for her agent client.
 
 `doctor` may report `WARN` for `mcp_config` until you add Handoff to Codex, Claude Code, Cursor, or another MCP client. That warning means the local setup is healthy, but agent access has not been wired yet.
 
@@ -74,7 +76,7 @@ npx -y @0dust/handoff join <invite-link> --install-mcp codex
 npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
-Use LAN mode when a teammate joins from another machine on the same network:
+Plain `start` creates loopback-only invites for the same machine. Use LAN mode before inviting when Alice joins from another machine on the same network:
 
 ```bash
 npx -y @0dust/handoff start --lan
