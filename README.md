@@ -72,7 +72,7 @@ Pick the machine that will host Handoff. For a small team this can be a teammate
 On the host:
 
 ```bash
-npx -y @0dust/handoff start --lan
+npx -y handoff-relay start --lan
 ```
 
 This creates:
@@ -86,15 +86,15 @@ This creates:
 Check it:
 
 ```bash
-npx -y @0dust/handoff doctor
+npx -y handoff-relay doctor
 ```
 
 If the host also wants to use Handoff from Codex or Cursor, install MCP during start:
 
 ```bash
-npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex
 # or
-npx -y @0dust/handoff start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor
 ```
 
 Claude Code setup is shown in [Agent setup](#agent-setup).
@@ -104,9 +104,9 @@ Claude Code setup is shown in [Agent setup](#agent-setup).
 The host/admin creates one invite per teammate:
 
 ```bash
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff invite bob
-npx -y @0dust/handoff invite priya
+npx -y handoff-relay invite alice
+npx -y handoff-relay invite bob
+npx -y handoff-relay invite priya
 ```
 
 Each invite prints a `join` command. Send each person their own command.
@@ -116,7 +116,7 @@ Each invite prints a `join` command. Send each person their own command.
 Each teammate runs their invite command on their own machine:
 
 ```bash
-npx -y @0dust/handoff join http://<handoff-host>:3737/invite/<invite-token>
+npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token>
 ```
 
 This creates the teammate's local profile and stores their member credentials. It does not replace MCP setup. The teammate still needs their coding agent connected to Handoff.
@@ -124,15 +124,15 @@ This creates the teammate's local profile and stores their member credentials. I
 Members using Codex or Cursor can install MCP while joining:
 
 ```bash
-npx -y @0dust/handoff join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp codex
 # or
-npx -y @0dust/handoff join <invite-link> --install-mcp cursor
+npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
 After joining:
 
 ```bash
-npx -y @0dust/handoff doctor
+npx -y handoff-relay doctor
 ```
 
 `doctor` may show `WARN mcp_config` when the profile and server work but the coding agent is not wired to Handoff yet. That warning means setup is not complete for real product use.
@@ -147,10 +147,10 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Codex
-npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex
 
 # teammate joining with Codex
-npx -y @0dust/handoff join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp codex
 ```
 
 The MCP entry looks like:
@@ -158,7 +158,7 @@ The MCP entry looks like:
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -171,14 +171,14 @@ More detail: [docs/codex-setup.md](docs/codex-setup.md).
 Handoff prints the profile-backed MCP command after `start` or `join`:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default
+npx -y handoff-relay server mcp --profile default
 ```
 
 Add it to Claude Code:
 
 ```bash
 claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","@0dust/handoff","server","mcp","--profile","default"]}'
+  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
 ```
 
 Or use MCP JSON:
@@ -188,7 +188,7 @@ Or use MCP JSON:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
     }
   }
 }
@@ -202,10 +202,10 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Cursor
-npx -y @0dust/handoff start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor
 
 # teammate joining with Cursor
-npx -y @0dust/handoff join <invite-link> --install-mcp cursor
+npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
 More detail: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
@@ -215,7 +215,7 @@ More detail: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
 Any MCP client that can launch a stdio command can use:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default
+npx -y handoff-relay server mcp --profile default
 ```
 
 Profile mode reads the active local Handoff profile. Agents do not need member tokens, workspace IDs, database paths, server URLs, or approval secrets in prompts or MCP schemas.
@@ -224,7 +224,7 @@ Profile mode reads the active local Handoff profile. Agents do not need member t
 
 Most users should give these instructions to their coding agent instead of wiring the files by hand.
 
-If the npm package is live, the agent can use `npx -y @0dust/handoff`. If testing from a local checkout:
+If the npm package is live, the agent can use `npx -y handoff-relay`. If testing from a local checkout:
 
 ```bash
 cd /path/to/handoff
@@ -232,14 +232,14 @@ pnpm install
 pnpm build
 ```
 
-Then use `node /path/to/handoff/dist/cli.js` anywhere the examples say `npx -y @0dust/handoff`.
+Then use `node /path/to/handoff/dist/cli.js` anywhere the examples say `npx -y handoff-relay`.
 
 ### Host/Admin Prompt
 
 ```text
 Set up Handoff as the host/admin for my team.
 
-1. Use `npx -y @0dust/handoff`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
+1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
 2. Start a reachable team workspace with `start --lan`.
 3. If I use Codex, install MCP with `start --lan --install-mcp codex`.
    If I use Cursor, install MCP with `start --lan --install-mcp cursor`.
@@ -254,7 +254,7 @@ Set up Handoff as the host/admin for my team.
 ```text
 Set up my machine as a Handoff team member.
 
-1. Use `npx -y @0dust/handoff`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
+1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
 2. Run the join command my teammate sent me.
 3. If I use Codex, add `--install-mcp codex` to the join command.
    If I use Cursor, add `--install-mcp cursor` to the join command.
@@ -315,9 +315,9 @@ Strict mode is the default. Agents can draft and read handoff packets, but they 
 When your agent asks for a send, hydrate, or reply approval token, generate it in a local terminal:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action send
-npx -y @0dust/handoff approval-token <packet-id> --action hydrate
-npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
+npx -y handoff-relay approval-token <packet-id> --action send
+npx -y handoff-relay approval-token <packet-id> --action hydrate
+npx -y handoff-relay approval-token <reply-packet-id> --action reply
 ```
 
 Paste the short-lived approval token back into the agent instruction. This is a human approval gate, not the handoff mechanism itself.
@@ -325,7 +325,7 @@ Paste the short-lived approval token back into the agent instruction. This is a 
 Agent-confirmed mode is optional for profile-backed MCP sessions. Start MCP with `--agent-approvals`:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default --agent-approvals
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 In that mode, your agent may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
@@ -372,7 +372,7 @@ More detail: [docs/security-privacy.md](docs/security-privacy.md).
 For a small team, `start --lan` is the fastest way to host on the same network. For a more durable team setup, run Handoff on a stable internal host:
 
 ```bash
-npx -y @0dust/handoff server start \
+npx -y handoff-relay server start \
   --db /srv/handoff/relay.db \
   --host 10.0.0.10 \
   --port 3737

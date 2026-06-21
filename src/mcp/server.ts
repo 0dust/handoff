@@ -402,7 +402,7 @@ export function createMcpServer(
   service: RelayBackend,
   options: McpDefinitionOptions = {},
 ): McpServer {
-  const server = new McpServer({ name: 'handoff', version: '0.1.0' });
+  const server = new McpServer({ name: 'handoff', version: '0.1.1' });
   for (const tool of getMcpToolDefinitions(service, options)) {
     server.registerTool(
       tool.name,
@@ -427,7 +427,7 @@ export async function startMcpServer(input: {
   const storedProfile = profileStore?.loadProfile(resolveProfileName(input.profileName));
   if (input.profileName && !storedProfile) {
     throw new Error(
-      `No Handoff profile named "${resolveProfileName(input.profileName)}". Run \`npx -y @0dust/handoff doctor\`.`,
+      `No Handoff profile named "${resolveProfileName(input.profileName)}". Run \`npx -y handoff-relay doctor\`.`,
     );
   }
   const storedCredentials = storedProfile
@@ -494,7 +494,7 @@ function authContextFromProfile(options: McpDefinitionOptions): McpAuthContext |
   const profile = store.loadProfile(profileName);
   if (!profile) {
     throw new Error(
-      `No Handoff profile named "${profileName}". Run \`npx -y @0dust/handoff doctor\`.`,
+      `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay doctor\`.`,
     );
   }
   const credentials = store.loadCredentials(profile.profileName);

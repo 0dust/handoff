@@ -11,8 +11,8 @@ Not shared memory. Not agent Slack. Just safer teammate handoffs.
 ## Preflight Before Posting
 
 - Push the release branch to the public GitHub repo.
-- Publish `@0dust/handoff` to npm.
-- Verify `npx -y @0dust/handoff doctor --json` runs from a clean temp directory.
+- Publish `handoff-relay` to npm.
+- Verify `npx -y handoff-relay doctor --json` runs from a clean temp directory.
 - Record the short demo from `docs/demo-video-script.md` after the npm package is live.
 
 ## GitHub Release Announcement
@@ -51,12 +51,12 @@ Try it:
 
 ```bash
 # Sam hosts a reachable workspace
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
 
 # Alice joins from her machine
-npx -y @0dust/handoff join http://<host>:3737/invite/<invite-token>
-npx -y @0dust/handoff doctor
+npx -y handoff-relay join http://<host>:3737/invite/<invite-token>
+npx -y handoff-relay doctor
 
 # Then wire Handoff into Codex, Claude Code, Cursor, or another MCP client.
 ```

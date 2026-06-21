@@ -3,16 +3,16 @@
 Handoff is local-first, but team handoff needs a server Alice's machine can reach. For teammates on the same Wi-Fi, Sam can host directly from his machine:
 
 ```bash
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff doctor
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
+npx -y handoff-relay doctor
 ```
 
 Alice runs the printed join command on her own machine:
 
 ```bash
-npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
-npx -y @0dust/handoff doctor
+npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y handoff-relay doctor
 ```
 
 Plain `start` is for local demos, CI smoke tests, or two profiles on one machine. It resets the active profile to loopback-only invite links. Re-run `start --lan` or pass `--public-url` before creating new invites that another machine should join.
@@ -22,7 +22,7 @@ For a dedicated trusted host, run one coordination server and have teammates joi
 ## Coordination Server
 
 ```bash
-npx -y @0dust/handoff server start \
+npx -y handoff-relay server start \
   --db /srv/handoff/relay.db \
   --host 10.0.0.10 \
   --port 3737
@@ -33,8 +33,8 @@ Put the host behind your normal network controls. Handoff does not provide a hos
 For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
 
 ```bash
-npx -y @0dust/handoff server status
-npx -y @0dust/handoff server stop
+npx -y handoff-relay server status
+npx -y handoff-relay server stop
 ```
 
 ## Profiles For Teammates
@@ -44,21 +44,21 @@ Create a workspace and invite members with the advanced commands, or run `start 
 After a teammate runs:
 
 ```bash
-npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token>
+npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token>
 ```
 
 their local profile stores the server URL, member token, workspace ID, and approval secret. They can install one supported local MCP config while joining:
 
 ```bash
-npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token> --install-mcp codex
+npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp codex
 # or
-npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token> --install-mcp cursor
+npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp cursor
 ```
 
 Their MCP command stays profile-backed:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default
+npx -y handoff-relay server mcp --profile default
 ```
 
 ## Explicit Server-Backed Commands
@@ -66,7 +66,7 @@ npx -y @0dust/handoff server mcp --profile default
 Low-level server-backed commands remain available for automation:
 
 ```bash
-npx -y @0dust/handoff inbox \
+npx -y handoff-relay inbox \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id>
@@ -75,7 +75,7 @@ npx -y @0dust/handoff inbox \
 Configure project/repo aliases once per workspace so clone names and local repo aliases resolve to the same packet history:
 
 ```bash
-npx -y @0dust/handoff workspace alias set \
+npx -y handoff-relay workspace alias set \
   --server-url http://10.0.0.10:3737 \
   --token <admin-token> \
   --workspace <workspace-id> \
@@ -83,7 +83,7 @@ npx -y @0dust/handoff workspace alias set \
   --alias relay-local \
   --json
 
-npx -y @0dust/handoff workspace alias list \
+npx -y handoff-relay workspace alias list \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \
@@ -95,14 +95,14 @@ npx -y @0dust/handoff workspace alias list \
 Strict profile-backed approval tokens use the local profile:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action send
-npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+npx -y handoff-relay approval-token <packet-id> --action send
+npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
 Profile-backed MCP can opt into agent-confirmed approvals:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default --agent-approvals
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 In that mode, the MCP process requests and consumes the same short-lived approval tokens through the configured Handoff backend after the agent shows the packet and you explicitly tell it to send, approve, or hydrate. Local database profiles keep that request local; remote/self-hosted profiles send the approval secret to the configured Handoff server API.
@@ -110,7 +110,7 @@ In that mode, the MCP process requests and consumes the same short-lived approva
 Explicit approval-token mode remains available:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> \
+npx -y handoff-relay approval-token <packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --approval-secret <approval-secret> \
@@ -131,7 +131,7 @@ Approval secrets stay outside MCP config. `HANDOFF_APPROVAL_SECRET` and the olde
 Terminal polling watcher:
 
 ```bash
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \
@@ -141,7 +141,7 @@ npx -y @0dust/handoff watch \
 Add best-effort native desktop notifications on the machine running the watcher:
 
 ```bash
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \
@@ -151,7 +151,7 @@ npx -y @0dust/handoff watch \
 Post concise notification summaries to a generic webhook endpoint:
 
 ```bash
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \

@@ -206,8 +206,8 @@ function formatMcpSetupHuman(
     lines.push('Status: not detected in Codex, Claude Code, or Cursor config yet.');
   }
   if (options.missingInstallHint === 'start') {
-    lines.push('Install for Codex: npx -y @0dust/handoff start --install-mcp codex');
-    lines.push('Install for Cursor: npx -y @0dust/handoff start --install-mcp cursor');
+    lines.push('Install for Codex: npx -y handoff-relay start --install-mcp codex');
+    lines.push('Install for Cursor: npx -y handoff-relay start --install-mcp cursor');
   } else {
     lines.push(
       `Codex config: ${

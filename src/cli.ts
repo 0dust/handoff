@@ -41,7 +41,7 @@ function createProfileBackend(options: CommonOptions): {
   const profile = store.loadProfile(profileName);
   if (!profile) {
     throw new Error(
-      `No active Handoff profile found. Run \`npx -y @0dust/handoff start\` or \`npx -y @0dust/handoff doctor\`.`,
+      `No active Handoff profile found. Run \`npx -y handoff-relay start\` or \`npx -y handoff-relay doctor\`.`,
     );
   }
   const credentials = store.loadCredentials(profile.profileName);
@@ -190,7 +190,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   program
     .name('handoff')
     .description('Human-approved handoffs between coding agents.')
-    .version('0.1.0');
+    .version('0.1.1');
 
   registerSetupCommands(program, { io });
 

@@ -1,6 +1,6 @@
 {
-  "name": "@0dust/handoff",
-  "version": "0.1.0",
+  "name": "handoff-relay",
+  "version": "0.1.1",
   "description": "Human-approved context handoffs between coding agents.",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,7 @@
     "node": ">=20"
   },
   "bin": {
-    "handoff": "./dist/cli.js"
+    "handoff": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -71,6 +71,7 @@
     "mcp": "tsx src/cli.ts server mcp",
     "prepack": "pnpm build",
     "prepublishOnly": "pnpm check && pnpm build",
+    "publish:npm": "node scripts/publish-npm-readme.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

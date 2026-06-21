@@ -81,7 +81,7 @@ export function installMcpConfig(input: {
       ...(existing.mcpServers ?? {}),
       handoff: {
         command: 'npx',
-        args: ['-y', '@0dust/handoff', 'server', 'mcp', '--profile', input.profileName],
+        args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', input.profileName],
       },
     },
   };
@@ -90,7 +90,7 @@ export function installMcpConfig(input: {
 }
 
 export function profileMcpCommand(profileName: string): string {
-  return `npx -y @0dust/handoff server mcp --profile ${profileName}`;
+  return `npx -y handoff-relay server mcp --profile ${profileName}`;
 }
 
 function configStatus(
@@ -137,13 +137,17 @@ function jsonMcpConfigContainsProfileCommand(contents: string, profileName: stri
 
 function configContainsProfileCommand(contents: string, profileName: string): boolean {
   return (
-    contents.includes('@0dust/handoff') &&
+    containsHandoffPackageToken(contents) &&
     contents.includes('server') &&
     contents.includes('mcp') &&
     contents.includes('--profile') &&
     contents.includes(profileName) &&
     !contents.includes('--explicit-auth')
   );
+}
+
+function containsHandoffPackageToken(contents: string): boolean {
+  return /(^|[\s"',[])(handoff-relay)(?=$|[\s"',\]])/.test(contents);
 }
 
 function upsertCodexHandoffTable(contents: string, profileName: string): string {
@@ -182,7 +186,7 @@ function codexHandoffTableRange(contents: string): { end: number; start: number 
 function installCommands(profileName: string): string[] {
   return [
     `Add to ~/.codex/config.toml: ${profileMcpCommand(profileName)}`,
-    `claude mcp add-json handoff '{"type":"stdio","command":"npx","args":["-y","@0dust/handoff","server","mcp","--profile","${profileName}"]}'`,
+    `claude mcp add-json handoff '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","${profileName}"]}'`,
     `Add to ~/.cursor/mcp.json: ${profileMcpCommand(profileName)}`,
   ];
 }
@@ -191,7 +195,7 @@ function codexToml(profileName: string): string {
   return [
     '[mcp_servers.handoff]',
     'command = "npx"',
-    `args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "${profileName}"]`,
+    `args = ["-y", "handoff-relay", "server", "mcp", "--profile", "${profileName}"]`,
     'startup_timeout_sec = 10',
     'tool_timeout_sec = 60',
     'enabled = true',

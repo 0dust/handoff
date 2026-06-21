@@ -105,7 +105,7 @@ function formatServerStatusHuman(result: Awaited<ReturnType<typeof serverStatusO
     `Started: ${result.metadata.startedAt}`,
   ];
   if (!result.reachable) {
-    lines.push('Run `npx -y @0dust/handoff start` to restart it.');
+    lines.push('Run `npx -y handoff-relay start` to restart it.');
   }
   return lines.join('\n');
 }

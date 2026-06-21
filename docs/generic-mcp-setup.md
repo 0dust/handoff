@@ -7,16 +7,16 @@ Handoff is a stdio MCP server. Any MCP client that can launch a command with arg
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff doctor
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
+npx -y handoff-relay doctor
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
-npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
-npx -y @0dust/handoff doctor
+npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y handoff-relay doctor
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the same profile-backed MCP command for her MCP client.
@@ -24,10 +24,10 @@ Alice does not run `start` for Sam's workspace. `join` accepts the invite, store
 Handoff can write MCP config for Codex and Cursor when you ask explicitly:
 
 ```bash
-npx -y @0dust/handoff start --lan --install-mcp codex
-npx -y @0dust/handoff start --lan --install-mcp cursor
-npx -y @0dust/handoff join <invite-link> --install-mcp codex
-npx -y @0dust/handoff join <invite-link> --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
 For Claude Code and other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
@@ -43,7 +43,7 @@ Use profile mode for normal agent sessions:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
     }
   }
 }
@@ -58,7 +58,7 @@ Strict approval remains the default. If you want the local agent session to trea
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default", "--agent-approvals"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
     }
   }
 }
@@ -71,8 +71,8 @@ With that flag, the MCP process requests and consumes short-lived approval token
 In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
 
 ```bash
-npx -y @0dust/handoff start --lan --install-mcp cursor
-npx -y @0dust/handoff join <invite-link> --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
 ```json
@@ -80,7 +80,7 @@ npx -y @0dust/handoff join <invite-link> --install-mcp cursor
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
     }
   }
 }
@@ -98,14 +98,14 @@ Show me the Relay Packet before sending.
 For a same-network team setup:
 
 ```bash
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
 ```
 
 For remote/self-hosted setups, users should `join` an invite link from that server. The saved profile records the remote server URL, so the MCP command stays the same:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default
+npx -y handoff-relay server mcp --profile default
 ```
 
 ## Explicit-Auth Compatibility
@@ -119,7 +119,7 @@ For advanced scripts and tests that intentionally pass auth through tool inputs:
       "command": "npx",
       "args": [
         "-y",
-        "@0dust/handoff",
+        "handoff-relay",
         "server",
         "mcp",
         "--server-url",
@@ -157,7 +157,7 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 In strict mode, generate approval tokens through the local CLI:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action send
-npx -y @0dust/handoff approval-token <packet-id> --action hydrate
-npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
+npx -y handoff-relay approval-token <packet-id> --action send
+npx -y handoff-relay approval-token <packet-id> --action hydrate
+npx -y handoff-relay approval-token <reply-packet-id> --action reply
 ```

@@ -3,9 +3,9 @@
 Use this path for automation, remote/self-hosted coordination servers, CI smoke tests, or explicit-auth MCP compatibility. Most users should start with:
 
 ```bash
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff join http://<host>:3737/invite/<invite-token>
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
+npx -y handoff-relay join http://<host>:3737/invite/<invite-token>
 ```
 
 Plain `start` is still useful for local demos and CI smoke tests, but its loopback invite links are not the normal teammate handoff path.
@@ -16,7 +16,7 @@ They document the strict approval-token flow. For profile-backed MCP sessions th
 ## Start A Coordination Server
 
 ```bash
-npx -y @0dust/handoff server start \
+npx -y handoff-relay server start \
   --db /srv/handoff/relay.db \
   --host 10.0.0.10 \
   --port 3737
@@ -25,7 +25,7 @@ npx -y @0dust/handoff server start \
 For local-only testing:
 
 ```bash
-npx -y @0dust/handoff server start \
+npx -y handoff-relay server start \
   --db .relay/team.db \
   --host 127.0.0.1 \
   --port 3737
@@ -34,7 +34,7 @@ npx -y @0dust/handoff server start \
 ## Create A Workspace
 
 ```bash
-npx -y @0dust/handoff workspace create \
+npx -y handoff-relay workspace create \
   --server-url http://10.0.0.10:3737 \
   --name "Relay Demo" \
   --handle sam \
@@ -53,14 +53,14 @@ Member tokens authenticate API/MCP calls. Approval secrets stay outside MCP and 
 ## Invite And Accept A Member
 
 ```bash
-npx -y @0dust/handoff member invite \
+npx -y handoff-relay member invite \
   --server-url http://10.0.0.10:3737 \
   --token <sam-token> \
   --workspace <workspace-id> \
   --handle alice \
   --json
 
-npx -y @0dust/handoff member accept \
+npx -y handoff-relay member accept \
   --server-url http://10.0.0.10:3737 \
   --invite <invite-token> \
   --display-name "Alice" \
@@ -72,13 +72,13 @@ npx -y @0dust/handoff member accept \
 Profile-backed MCP is the normal mode:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default
+npx -y handoff-relay server mcp --profile default
 ```
 
 Explicit-auth compatibility mode keeps the older schemas that include `authToken` and `workspaceId`:
 
 ```bash
-npx -y @0dust/handoff server mcp \
+npx -y handoff-relay server mcp \
   --server-url http://10.0.0.10:3737 \
   --explicit-auth
 ```
@@ -88,7 +88,7 @@ Use explicit-auth mode only when a script or test harness intentionally supplies
 ## Draft, Approve, And Send
 
 ```bash
-npx -y @0dust/handoff share-with @alice \
+npx -y handoff-relay share-with @alice \
   --server-url http://10.0.0.10:3737 \
   --token <sam-token> \
   --workspace <workspace-id> \
@@ -103,14 +103,14 @@ npx -y @0dust/handoff share-with @alice \
   --hypothesis "Refresh persistence ordering issue." \
   --json
 
-npx -y @0dust/handoff approval-token <handoff-packet-id> \
+npx -y handoff-relay approval-token <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <sam-token> \
   --approval-secret <sam-approval-secret> \
   --action send \
   --json
 
-npx -y @0dust/handoff approve <handoff-packet-id> \
+npx -y handoff-relay approve <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <sam-token> \
   --approval-token <send-approval-token> \
@@ -120,30 +120,30 @@ npx -y @0dust/handoff approve <handoff-packet-id> \
 ## Review And Hydrate
 
 ```bash
-npx -y @0dust/handoff inbox \
+npx -y handoff-relay inbox \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --workspace <workspace-id> \
   --json
 
-npx -y @0dust/handoff view <handoff-packet-id> \
+npx -y handoff-relay view <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --json
 
-npx -y @0dust/handoff accept <handoff-packet-id> \
+npx -y handoff-relay accept <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --json
 
-npx -y @0dust/handoff approval-token <handoff-packet-id> \
+npx -y handoff-relay approval-token <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --approval-secret <alice-approval-secret> \
   --action hydrate \
   --json
 
-npx -y @0dust/handoff hydrate <handoff-packet-id> \
+npx -y handoff-relay hydrate <handoff-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --client claude-code \
@@ -153,21 +153,21 @@ npx -y @0dust/handoff hydrate <handoff-packet-id> \
 ## Reply
 
 ```bash
-npx -y @0dust/handoff reply <ask-packet-id> "Persist the rotated refresh token before retrying." \
+npx -y handoff-relay reply <ask-packet-id> "Persist the rotated refresh token before retrying." \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --summary "Likely refresh persistence ordering issue." \
   --source-client claude-code \
   --json
 
-npx -y @0dust/handoff approval-token <reply-packet-id> \
+npx -y handoff-relay approval-token <reply-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --approval-secret <alice-approval-secret> \
   --action reply \
   --json
 
-npx -y @0dust/handoff approve <reply-packet-id> \
+npx -y handoff-relay approve <reply-packet-id> \
   --server-url http://10.0.0.10:3737 \
   --token <alice-token> \
   --approval-token <reply-approval-token> \
@@ -177,18 +177,18 @@ npx -y @0dust/handoff approve <reply-packet-id> \
 ## Watch
 
 ```bash
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <member-token> \
   --workspace <workspace-id>
 
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <member-token> \
   --workspace <workspace-id> \
   --desktop-notifications
 
-npx -y @0dust/handoff watch \
+npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <member-token> \
   --workspace <workspace-id> \
