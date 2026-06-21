@@ -71,6 +71,37 @@ describe('workspace identity and permissions', () => {
     expect(rotated.token).not.toBe(accepted.member.token);
   });
 
+  test('allows members and recipients with handles that begin with digits', () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Relay Team',
+      adminHandle: '0dust',
+      adminName: '0dust',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: '1alice',
+    });
+    const accepted = service.acceptInvite({
+      inviteToken: invite.invite.token,
+      displayName: 'Alice',
+    });
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@1alice',
+      question: 'Can you review this?',
+      title: 'Digit handle check',
+      summary: 'Regression check for handles that start with a digit.',
+      sourceClient: 'codex',
+    });
+
+    expect(workspace.admin.handle).toBe('0dust');
+    expect(accepted.member.handle).toBe('1alice');
+    expect(draft.packet.recipient_member_ids).toEqual([accepted.member.id]);
+  });
+
   test('revoked members cannot authenticate, receive future packets, or access history', async () => {
     const { service, workspace, alice } = await createTwoMembers();
 

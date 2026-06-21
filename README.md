@@ -328,7 +328,7 @@ Agent-confirmed mode is optional for profile-backed MCP sessions. Start MCP with
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-In that mode, your agent may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
+In that mode, your agent may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
 
 ## Packet Shape
 

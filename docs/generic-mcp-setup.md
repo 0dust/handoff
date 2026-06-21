@@ -64,7 +64,7 @@ Strict approval remains the default. If you want the local agent session to trea
 }
 ```
 
-With that flag, the MCP process requests and consumes short-lived approval tokens through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API.
+With that flag, the MCP process requests and consumes short-lived approval tokens through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
 
 ## Cursor
 
