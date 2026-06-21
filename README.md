@@ -62,6 +62,8 @@ npx -y @0dust/handoff doctor
 
 `start` creates a local Handoff profile, a local SQLite database, a workspace, an admin member, a secure credential file, and a profile-backed MCP command. It does not print member tokens, approval secrets, database paths, workspace IDs, or MCP auth arguments in the normal path.
 
+`doctor` may report `WARN` for `mcp_config` until you add Handoff to Codex, Claude Code, Cursor, or another MCP client. That warning means the local setup is healthy, but agent access has not been wired yet.
+
 If you want Handoff to write an MCP config for a supported client, pass an explicit install target:
 
 ```bash
@@ -234,6 +236,8 @@ npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
 ```
 
+Running plain `start` later returns the profile to local-only invite links. Use `--lan` or pass a fresh `--public-url` again when you want new invites to leave the machine.
+
 Remote or self-hosted setup still uses the existing low-level server and explicit flags. Keep that path for automation, custom hosting, and migration work:
 
 - [Advanced manual setup](docs/advanced-manual-setup.md)
@@ -380,6 +384,8 @@ handoff invite
 handoff join
 handoff doctor
 handoff server start
+handoff server status
+handoff server stop
 handoff server mcp
 handoff workspace create
 handoff member invite

@@ -7,6 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,17 @@ import {
 } from '../src/setup/orchestrator.js';
 import { runDoctorChecks } from '../src/setup/doctor.js';
 import { buildInviteLink, parseInviteLink } from '../src/setup/invite-link.js';
-import { detectLanBaseUrl, findAvailablePort } from '../src/setup/lifecycle.js';
+import {
+  detectLanBaseUrl,
+  ensureLocalServer,
+  findAvailablePort,
+  inspectRecordedServer,
+  readServerMetadata,
+  stopRecordedServer,
+  waitForHandoffServer,
+  writeServerMetadata,
+  type ServerMetadata,
+} from '../src/setup/lifecycle.js';
 import { createProfileStore } from '../src/setup/profile.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createRelayDatabase } from '../src/storage/database.js';
@@ -47,6 +58,145 @@ async function startProfileBackedApi(dbPath: string) {
 
 function tempHome() {
   return mkdtempSync(join(tmpdir(), 'handoff-home-'));
+}
+
+function writeServerMetadataFixture(
+  home: string,
+  overrides: Partial<{
+    dbPath: string;
+    host: string;
+    includeServerId: boolean;
+    logPath: string;
+    pid: number;
+    port: number;
+    serverId: string;
+    serverUrl: string;
+    startedAt: string;
+  }> = {},
+) {
+  const port = overrides.port ?? 39337;
+  const metadata: ServerMetadata = {
+    pid: overrides.pid ?? 999999,
+    dbPath: overrides.dbPath ?? join(home, 'relay.db'),
+    host: overrides.host ?? '127.0.0.1',
+    port,
+    serverUrl: overrides.serverUrl ?? `http://127.0.0.1:${port}`,
+    logPath: overrides.logPath ?? join(home, 'logs', `server-${port}.log`),
+    startedAt: overrides.startedAt ?? new Date().toISOString(),
+  };
+  if (overrides.includeServerId !== false) {
+    metadata.serverId = overrides.serverId ?? 'srv_test';
+  }
+  writeServerMetadata(home, metadata);
+}
+
+async function spawnFakeHandoffServer(
+  serverId = 'srv_test',
+  input: { script?: string; startupTimeoutMs?: number } = {},
+) {
+  const script =
+    input.script ??
+    [
+      "const http = require('node:http');",
+      'const serverId = process.env.HANDOFF_SERVER_ID;',
+      'const server = http.createServer((request, response) => {',
+      "  if (request.url === '/health') {",
+      "    response.writeHead(200, { 'content-type': 'application/json' });",
+      "    response.end(JSON.stringify({ name: 'handoff', ok: true, pid: process.pid, server_id: serverId, version: 'test' }));",
+      '    return;',
+      '  }',
+      '  response.writeHead(404).end();',
+      '});',
+      "server.listen(0, '127.0.0.1', () => console.log(server.address().port));",
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+  const child = spawn(process.execPath, ['-e', script], {
+    env: { ...process.env, HANDOFF_SERVER_ID: serverId },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    let settled = false;
+    let stderr = '';
+    const startupTimeout = setTimeout(() => {
+      fail(`Fake Handoff server timed out before reporting a port.${stderrSuffix(stderr)}`);
+    }, input.startupTimeoutMs ?? 1_000);
+
+    function fail(message: string) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startupTimeout);
+      void killChildAndWait(child).then(
+        () => reject(new Error(message)),
+        () => reject(new Error(message)),
+      );
+    }
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.once('error', (error) => {
+      fail(`Fake Handoff server failed to start: ${error.message}.${stderrSuffix(stderr)}`);
+    });
+    child.once('exit', (code, signal) => {
+      fail(
+        `Fake Handoff server exited before reporting a port (code ${code ?? 'unknown'}, signal ${signal ?? 'unknown'}).${stderrSuffix(stderr)}`,
+      );
+    });
+    child.stdout?.once('data', (chunk: Buffer) => {
+      const parsed = Number(chunk.toString('utf8').trim());
+      if (!Number.isFinite(parsed)) {
+        fail(`Fake Handoff server printed an invalid port.${stderrSuffix(stderr)}`);
+        return;
+      }
+      settled = true;
+      clearTimeout(startupTimeout);
+      resolve(parsed);
+    });
+  });
+  return {
+    child,
+    port,
+    serverId,
+    serverUrl: `http://127.0.0.1:${port}`,
+  };
+}
+
+function stderrSuffix(stderr: string): string {
+  const trimmed = stderr.trim();
+  return trimmed ? ` Stderr: ${trimmed}` : '';
+}
+
+async function killChildAndWait(child: ChildProcess, signal: NodeJS.Signals = 'SIGKILL') {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  let onExit: (() => void) | undefined;
+  const exited = new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 500);
+    onExit = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    child.once('exit', onExit);
+  });
+  try {
+    process.kill(child.pid, signal);
+  } catch {
+    if (onExit) child.off('exit', onExit);
+    return;
+  }
+  await exited;
+}
+
+async function pidHasExited(pid: number, timeoutMs = 1_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
 }
 
 describe('profile and credential storage', () => {
@@ -357,6 +507,93 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(lan.server.warning).toContain('not LAN-reachable');
   });
 
+  test('local start clears stale LAN invite state from an existing profile', async () => {
+    const home = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const store = createProfileStore({ home });
+    store.saveProfile({
+      ...started.profile,
+      publicInviteBaseUrl: 'http://192.168.1.42:3737',
+      serverMode: 'lan',
+      serverUrl: 'http://127.0.0.1:3737',
+    });
+
+    const local = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      lifecycle: {
+        ensureServer: async () => ({
+          port: 39338,
+          serverUrl: 'http://127.0.0.1:39338',
+          status: 'reused',
+        }),
+      },
+    });
+    const invite = await createInviteForProfile({ home, handle: 'alice' });
+
+    expect(local.profile.serverMode).toBe('local');
+    expect(local.profile.publicInviteBaseUrl).toBeUndefined();
+    expect(invite.inviteLink).toContain('http://127.0.0.1:39338');
+    expect(invite.inviteLink).not.toContain('192.168.1.42');
+  });
+
+  test('start preserves an explicit public invite URL for the current invocation', async () => {
+    const home = tempHome();
+    const publicUrl = 'https://handoff.example.test';
+
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      publicUrl,
+      lifecycle: {
+        ensureServer: async () => ({
+          port: 39339,
+          serverUrl: 'http://127.0.0.1:39339',
+          status: 'started',
+        }),
+      },
+    });
+    const invite = await createInviteForProfile({ home, handle: 'alice' });
+
+    expect(started.profile.serverMode).toBe('local');
+    expect(started.profile.publicInviteBaseUrl).toBe(publicUrl);
+    expect(invite.inviteLink).toContain(`${publicUrl}/invite/`);
+  });
+
+  test('start rejects a joined remote profile instead of converting it to local state', async () => {
+    const home = tempHome();
+    const store = createProfileStore({ home });
+    const remoteProfile = {
+      schemaVersion: 1 as const,
+      profileName: 'default',
+      workspaceId: 'workspace_remote',
+      workspaceName: 'Remote Workspace',
+      memberId: 'member_remote',
+      handle: 'alice',
+      displayName: 'Alice',
+      role: 'member' as const,
+      serverUrl: 'https://handoff.example.test',
+      serverMode: 'remote' as const,
+      createdAt: new Date().toISOString(),
+      lastVerifiedAt: new Date().toISOString(),
+    };
+    store.saveProfile(remoteProfile);
+    store.saveCredentials('default', {
+      memberToken: 'relay_member_remote',
+      approvalSecret: 'relay_approval_secret_remote',
+      createdAt: new Date().toISOString(),
+    });
+
+    await expect(
+      startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'alice' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      }),
+    ).rejects.toThrow(/joined to a remote Handoff server/);
+    expect(store.loadProfile('default')).toEqual(remoteProfile);
+  });
+
   test('port conflict handling chooses a different free port when preferred is occupied', async () => {
     const blocker = createServer((_request, response) => {
       response.writeHead(200).end('not handoff');
@@ -374,6 +611,191 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(selected).not.toBe(address.port);
     } finally {
       await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  test('readiness polling respects the overall timeout when health responses hang', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/health') {
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected TCP server address');
+    }
+    const startedAt = Date.now();
+    try {
+      await expect(
+        waitForHandoffServer(`http://127.0.0.1:${address.port}`, {
+          intervalMs: 25,
+          probeTimeoutMs: 50,
+          timeoutMs: 200,
+        }),
+      ).resolves.toBe(false);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test('failed local server startup terminates the spawned child and does not write metadata', async () => {
+    const home = tempHome();
+    const store = createProfileStore({ home });
+    store.ensureHome();
+    const dbPath = store.localDatabasePath('default');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    const fakeCliPath = join(home, 'fake-handoff-cli.js');
+    writeFileSync(fakeCliPath, 'setInterval(() => {}, 1000);\n');
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+
+    let error: unknown;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+      error = await ensureLocalServer({
+        dbPath,
+        home,
+        host: '127.0.0.1',
+        port: 39340,
+        readinessIntervalMs: 1,
+        readinessTimeoutMs: 50,
+      }).catch((caught: unknown) => caught);
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain('Handoff server did not become reachable at http://127.0.0.1:');
+    expect(message).toContain('cleanup: terminated');
+    expect(message).toContain(join(home, 'logs'));
+    expect(readServerMetadata(home)).toBeUndefined();
+
+    const pid = Number(message.match(/pid (\d+)/)?.[1]);
+    expect(Number.isFinite(pid)).toBe(true);
+    expect(await pidHasExited(pid)).toBe(true);
+  });
+
+  test('server metadata can be inspected and stale records are cleaned up', async () => {
+    const home = tempHome();
+    writeServerMetadataFixture(home);
+
+    expect(readServerMetadata(home)?.serverUrl).toBe('http://127.0.0.1:39337');
+    await expect(stopRecordedServer(home)).resolves.toMatchObject({ status: 'not_running' });
+    expect(readServerMetadata(home)).toBeUndefined();
+  });
+
+  test('fake Handoff server helper rejects with stderr when startup exits early', async () => {
+    await expect(
+      spawnFakeHandoffServer('srv_broken_test', {
+        script: "console.error('intentional fake server failure'); process.exit(7);",
+        startupTimeoutMs: 500,
+      }),
+    ).rejects.toThrow(/code 7.*intentional fake server failure/);
+  });
+
+  test('fake Handoff server helper rejects when startup never reports a port', async () => {
+    await expect(
+      spawnFakeHandoffServer('srv_hanging_test', {
+        script: 'setInterval(() => {}, 1000);',
+        startupTimeoutMs: 50,
+      }),
+    ).rejects.toThrow(/timed out before reporting a port/);
+  });
+
+  test('fake Handoff server helper rejects when startup prints a non-numeric port', async () => {
+    await expect(
+      spawnFakeHandoffServer('srv_invalid_port_test', {
+        script: "console.log('not-a-port'); setInterval(() => {}, 1000);",
+        startupTimeoutMs: 500,
+      }),
+    ).rejects.toThrow(/printed an invalid port/);
+  });
+
+  test('server stop does not terminate an arbitrary process from stale metadata', async () => {
+    const home = tempHome();
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    await new Promise<void>((resolve) => child.once('spawn', resolve));
+    try {
+      if (!child.pid) {
+        throw new Error('Expected child pid');
+      }
+      writeServerMetadataFixture(home, { pid: child.pid });
+
+      await expect(stopRecordedServer(home)).resolves.toMatchObject({
+        pid: child.pid,
+        status: 'not_running',
+      });
+      expect(readServerMetadata(home)).toBeUndefined();
+      expect(() => process.kill(child.pid!, 0)).not.toThrow();
+    } finally {
+      await killChildAndWait(child);
+    }
+  });
+
+  test('server stop accepts legacy metadata when the health pid matches', async () => {
+    const home = tempHome();
+    const server = await spawnFakeHandoffServer('srv_legacy_recorded_test');
+    const child = server.child;
+    try {
+      if (!child.pid) {
+        throw new Error('Expected child pid');
+      }
+      writeServerMetadataFixture(home, {
+        includeServerId: false,
+        pid: child.pid,
+        port: server.port,
+        serverUrl: server.serverUrl,
+      });
+
+      await expect(inspectRecordedServer(home)).resolves.toMatchObject({
+        identity: 'legacy_match',
+        reachable: true,
+      });
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      await expect(stopRecordedServer(home)).resolves.toMatchObject({
+        pid: child.pid,
+        status: 'stopped',
+      });
+      expect(readServerMetadata(home)).toBeUndefined();
+      await exited;
+    } finally {
+      await killChildAndWait(child);
+    }
+  });
+
+  test('server stop terminates the recorded matching Handoff server', async () => {
+    const home = tempHome();
+    const server = await spawnFakeHandoffServer('srv_recorded_test');
+    const child = server.child;
+    try {
+      if (!child.pid) {
+        throw new Error('Expected child pid');
+      }
+      writeServerMetadataFixture(home, {
+        pid: child.pid,
+        port: server.port,
+        serverId: server.serverId,
+        serverUrl: server.serverUrl,
+      });
+
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      await expect(stopRecordedServer(home)).resolves.toMatchObject({
+        pid: child.pid,
+        status: 'stopped',
+      });
+      expect(readServerMetadata(home)).toBeUndefined();
+      await exited;
+    } finally {
+      await killChildAndWait(child);
     }
   });
 

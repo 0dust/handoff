@@ -35,6 +35,8 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   app.get('/health', async () => ({
     name: 'handoff',
     ok: true,
+    pid: process.pid,
+    server_id: process.env.HANDOFF_SERVER_ID,
     version: '0.1.0',
   }));
 

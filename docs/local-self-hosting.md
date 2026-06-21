@@ -14,6 +14,8 @@ npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
 ```
 
+Plain `start` resets the active profile to local-only invite links. Re-run `start --lan` or pass `--public-url` before creating new invites that another machine should join.
+
 For a dedicated trusted host, run one coordination server and have teammates join an invite from that server.
 
 ## Coordination Server
@@ -26,6 +28,13 @@ npx -y @0dust/handoff server start \
 ```
 
 Put the host behind your normal network controls. Handoff does not provide a hosted cloud service.
+
+For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
+
+```bash
+npx -y @0dust/handoff server status
+npx -y @0dust/handoff server stop
+```
 
 ## Profiles For Teammates
 

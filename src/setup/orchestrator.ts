@@ -137,6 +137,11 @@ export async function startHandoffSetup(
       service.close();
     }
   }
+  if (profile.serverMode === 'remote') {
+    throw new Error(
+      `Profile "${profile.profileName}" is joined to a remote Handoff server. Use a new --profile name to host a local workspace.`,
+    );
+  }
 
   const host = input.host ?? (input.lan ? '0.0.0.0' : '127.0.0.1');
   const port = input.port ?? portFromUrl(profile.serverUrl) ?? 3737;
@@ -153,19 +158,13 @@ export async function startHandoffSetup(
   const lanReachable = !input.lan || serverIsLanReachable(server);
   const publicInviteBaseUrl =
     input.publicUrl ??
-    (input.lan
-      ? lanReachable
-        ? detectLanBaseUrl({ port: selectedPort })
-        : undefined
-      : profile.publicInviteBaseUrl && profile.publicInviteBaseUrl !== 'local-db'
-        ? profile.publicInviteBaseUrl
-        : undefined);
+    (input.lan ? (lanReachable ? detectLanBaseUrl({ port: selectedPort }) : undefined) : undefined);
 
   profile = {
     ...profile,
     serverUrl,
     publicInviteBaseUrl,
-    serverMode: input.lan ? 'lan' : profile.serverMode,
+    serverMode: input.lan ? 'lan' : 'local',
     lastVerifiedAt: new Date().toISOString(),
   };
   store.saveProfile(profile);

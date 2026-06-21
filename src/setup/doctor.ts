@@ -154,7 +154,7 @@ export async function runDoctorChecks(
   if (profile.serverUrl === 'local-db') {
     checks.push(ok('server_reachable', 'Profile uses local database mode.'));
     checks.push(ok('server_identity', 'Local database profile does not need HTTP health.'));
-  } else if (await probeHandoffServer(profile.serverUrl)) {
+  } else if (await probeHandoffServer(profile.serverUrl, { timeoutMs: 1_000 })) {
     checks.push(ok('server_reachable', `Server is reachable at ${profile.serverUrl}.`));
     checks.push(ok('server_identity', 'Server identifies as Handoff.'));
   } else {
