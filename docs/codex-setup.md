@@ -66,7 +66,7 @@ Use Handoff to check my inbox. Show me any Relay Packet before hydration.
 Wait for my approval before calling relay_hydrate.
 ```
 
-Approval tokens are generated outside MCP:
+Strict approval tokens are generated outside MCP:
 
 ```bash
 npx -y @0dust/handoff approval-token <packet-id> --action send
@@ -74,6 +74,19 @@ npx -y @0dust/handoff approval-token <packet-id> --action hydrate
 ```
 
 The command uses your active Handoff profile and asks for a local confirmation phrase. Do not put approval secrets in Codex config.
+
+For a smoother local workflow, profile-backed MCP can opt into agent-confirmed approvals:
+
+```toml
+[mcp_servers.handoff]
+command = "npx"
+args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default", "--agent-approvals"]
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+enabled = true
+```
+
+With that flag, Codex may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; remote profiles send the approval secret to that server API. Approval secrets still stay out of Codex config and tool schemas.
 
 ## Remote Or Self-Hosted
 

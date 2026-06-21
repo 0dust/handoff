@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 
 import { startApiServer } from '../api/server.js';
-import { startMcpServer } from '../mcp/server.js';
+import { startMcpServer as defaultStartMcpServer } from '../mcp/server.js';
 import {
   inspectRecordedServer,
   stopRecordedServer,
@@ -12,8 +12,12 @@ import {
 import { createProfileStore } from '../setup/profile.js';
 import { addCommonOptions, write, type CliIo, type CommonOptions } from './shared.js';
 
-export function registerServerCommands(program: Command, input: { io: CliIo }): void {
+export function registerServerCommands(
+  program: Command,
+  input: { io: CliIo; startMcpServer?: typeof defaultStartMcpServer },
+): void {
   const { io } = input;
+  const startMcpServer = input.startMcpServer ?? defaultStartMcpServer;
   const server = program.command('server').description('Coordination and MCP servers');
   addCommonOptions(
     server
@@ -50,15 +54,22 @@ export function registerServerCommands(program: Command, input: { io: CliIo }): 
     server
       .command('mcp')
       .option('--profile <name>', 'Use a stored Handoff profile')
+      .option(
+        '--agent-approvals',
+        'Allow profile-backed MCP to mint approval tokens after explicit user instruction',
+      )
       .option('--explicit-auth', 'Expose authToken and workspaceId in MCP schemas'),
-  ).action(async (options: CommonOptions & { explicitAuth?: boolean }) => {
-    await startMcpServer({
-      dbPath: options.db ?? '.relay/relay.db',
-      explicitAuth: options.explicitAuth,
-      profileName: options.profile,
-      serverUrl: options.serverUrl,
-    });
-  });
+  ).action(
+    async (options: CommonOptions & { agentApprovals?: boolean; explicitAuth?: boolean }) => {
+      await startMcpServer({
+        agentApprovals: options.agentApprovals,
+        dbPath: options.db ?? '.relay/relay.db',
+        explicitAuth: options.explicitAuth,
+        profileName: options.profile,
+        serverUrl: options.serverUrl,
+      });
+    },
+  );
 }
 
 async function serverStatusOutput(): Promise<{

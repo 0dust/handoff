@@ -2,11 +2,13 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 
 import { RelayApiClient } from '../src/api/client.js';
 import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
+import { registerServerCommands } from '../src/cli/server-commands.js';
 import { getMcpToolDefinitions } from '../src/mcp/server.js';
 import { createNotificationDispatcher, createPollingWatcher } from '../src/notifications.js';
 import { RelayService } from '../src/service/relay-service.js';
@@ -18,6 +20,19 @@ function createService() {
   const dbPath = join(dir, 'relay.db');
   const service = new RelayService(createRelayDatabase(dbPath));
   return { service, dbPath };
+}
+
+async function startApiForService(service: RelayService) {
+  const app = buildApiServer({ service });
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  const address = app.server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected API server address');
+  }
+  return {
+    close: () => app.close(),
+    serverUrl: `http://127.0.0.1:${address.port}`,
+  };
 }
 
 async function runCliWithApproval(argv: string[]) {
@@ -358,6 +373,237 @@ describe('MCP tool contracts', () => {
     expect(result).toMatchObject({ status: 'pending_sender_approval' });
   });
 
+  test('profile-backed MCP remains strict without agent-confirmed approvals', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Strict MCP Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const tools = getMcpToolDefinitions(service, {
+      authContext: {
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const askTool = tools.find((tool) => tool.name === 'relay_ask');
+    const approveTool = tools.find((tool) => tool.name === 'relay_approve');
+    const hydrateTool = tools.find((tool) => tool.name === 'relay_hydrate');
+    const draft = await askTool?.handler({
+      to: '@sam',
+      question: 'Can you review strict mode?',
+      title: 'Strict approval',
+      summary: 'MCP should still require a token by default.',
+      sourceClient: 'codex',
+    });
+
+    expect(approveTool?.inputSchema.approvalToken.safeParse(undefined).success).toBe(false);
+    expect(hydrateTool?.inputSchema.approvalToken.safeParse(undefined).success).toBe(false);
+    expect(approveTool?.inputSchema.allowSecretOverride).toBeTruthy();
+    await expect(approveTool?.handler({ packetId: draft.id })).rejects.toThrow(/approval token/i);
+  });
+
+  test('agent-confirmed MCP approvals send, hydrate, and approve replies without manual tokens', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Agent Approval Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    const senderTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: workspace.admin.approval_secret,
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const recipientTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: alice.member.approval_secret,
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const askTool = senderTools.find((tool) => tool.name === 'relay_ask');
+    const senderApproveTool = senderTools.find((tool) => tool.name === 'relay_approve');
+    const viewTool = recipientTools.find((tool) => tool.name === 'relay_view');
+    const acceptTool = recipientTools.find((tool) => tool.name === 'relay_accept');
+    const hydrateTool = recipientTools.find((tool) => tool.name === 'relay_hydrate');
+    const replyTool = recipientTools.find((tool) => tool.name === 'relay_reply');
+    const recipientApproveTool = recipientTools.find((tool) => tool.name === 'relay_approve');
+
+    const draft = await askTool?.handler({
+      to: '@alice',
+      question: 'Can you inspect auth refresh?',
+      title: 'Agent approval',
+      summary: 'The agent should send after explicit user approval.',
+      sourceClient: 'codex',
+    });
+    const sent = await senderApproveTool?.handler({ packetId: draft.id });
+
+    expect(senderApproveTool?.inputSchema.approvalToken.safeParse(undefined).success).toBe(true);
+    expect(hydrateTool?.inputSchema.approvalToken.safeParse(undefined).success).toBe(true);
+    expect(senderApproveTool?.inputSchema.allowSecretOverride).toBeUndefined();
+    await viewTool?.handler({ packetId: draft.id });
+    await acceptTool?.handler({ packetId: draft.id });
+    const hydrated = await hydrateTool?.handler({ packetId: draft.id, client: 'codex' });
+    const reply = await replyTool?.handler({
+      packetId: draft.id,
+      answer: 'Persist the rotated token before retrying.',
+      summary: 'Persistence order issue.',
+      sourceClient: 'codex',
+    });
+    const approvedReply = await recipientApproveTool?.handler({ packetId: reply.id });
+
+    expect(sent.packet.status).toBe('delivered');
+    expect(hydrated.context).toContain('Can you inspect auth refresh?');
+    expect(approvedReply.packet.status).toBe('replied');
+    expect(senderApproveTool?.inputSchema.approvalSecret).toBeUndefined();
+    expect(hydrateTool?.inputSchema.approvalSecret).toBeUndefined();
+  });
+
+  test('agent-confirmed MCP approval cannot override redaction blocks without a manual token', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Redaction Override Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const tools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: workspace.admin.approval_secret,
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const askTool = tools.find((tool) => tool.name === 'relay_ask');
+    const approveTool = tools.find((tool) => tool.name === 'relay_approve');
+    const draft = await askTool?.handler({
+      to: '@sam',
+      question: 'Can you review blocked evidence?',
+      title: 'Blocked evidence',
+      summary: 'This packet includes blocked evidence.',
+      sourceClient: 'codex',
+      evidence: [
+        {
+          kind: 'human_note',
+          label: 'blocked secret',
+          source: 'note',
+          excerpt: 'API_KEY=sk-should-not-send-123456',
+          sensitivity: 'secret_detected',
+        },
+      ],
+    });
+
+    expect(draft.packet.redaction_report.blocked).toBe(true);
+    await expect(
+      approveTool?.handler({ allowSecretOverride: true, packetId: draft.id }),
+    ).rejects.toThrow(/manual/i);
+    expect(service.getPacket(draft.id).status).toBe('pending_sender_approval');
+  });
+
+  test('agent-confirmed MCP approvals work through API-backed profiles', async () => {
+    const { service } = createService();
+    const api = await startApiForService(service);
+    try {
+      const client = new RelayApiClient({ serverUrl: api.serverUrl });
+      const workspace = service.createWorkspace({
+        name: 'Remote Agent Approval Team',
+        adminHandle: 'sam',
+        adminName: 'Sam',
+      });
+      const invite = service.inviteMember({
+        adminToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        handle: 'alice',
+      });
+      const alice = service.acceptInvite({
+        inviteToken: invite.invite.token,
+        displayName: 'Alice',
+      });
+      const senderTools = getMcpToolDefinitions(client, {
+        agentApprovals: true,
+        authContext: {
+          approvalSecret: workspace.admin.approval_secret,
+          authToken: workspace.admin.token,
+          workspaceId: workspace.workspace.id,
+        },
+      });
+      const recipientTools = getMcpToolDefinitions(client, {
+        agentApprovals: true,
+        authContext: {
+          approvalSecret: alice.member.approval_secret,
+          authToken: alice.member.token,
+          workspaceId: workspace.workspace.id,
+        },
+      });
+      const askTool = senderTools.find((tool) => tool.name === 'relay_ask');
+      const senderApproveTool = senderTools.find((tool) => tool.name === 'relay_approve');
+      const viewTool = recipientTools.find((tool) => tool.name === 'relay_view');
+      const acceptTool = recipientTools.find((tool) => tool.name === 'relay_accept');
+      const hydrateTool = recipientTools.find((tool) => tool.name === 'relay_hydrate');
+      const replyTool = recipientTools.find((tool) => tool.name === 'relay_reply');
+      const recipientApproveTool = recipientTools.find((tool) => tool.name === 'relay_approve');
+
+      const draft = await askTool?.handler({
+        to: '@alice',
+        question: 'Can you inspect remote approval?',
+        title: 'Remote agent approval',
+        summary: 'The API-backed MCP path should mint approval tokens.',
+        sourceClient: 'codex',
+      });
+      const sent = await senderApproveTool?.handler({ packetId: draft.id });
+
+      await viewTool?.handler({ packetId: draft.id });
+      await acceptTool?.handler({ packetId: draft.id });
+      const hydrated = await hydrateTool?.handler({ packetId: draft.id, client: 'codex' });
+      const reply = await replyTool?.handler({
+        packetId: draft.id,
+        answer: 'Remote approval works.',
+        summary: 'API-backed approval path is covered.',
+        sourceClient: 'codex',
+      });
+      const approvedReply = await recipientApproveTool?.handler({ packetId: reply.id });
+
+      expect(sent.packet.status).toBe('delivered');
+      expect(hydrated.context).toContain('Can you inspect remote approval?');
+      expect(approvedReply.packet.status).toBe('replied');
+    } finally {
+      await api.close();
+    }
+  });
+
+  test('agent-confirmed MCP approvals require a profile approval secret', () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Missing Secret Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+
+    expect(() =>
+      getMcpToolDefinitions(service, {
+        agentApprovals: true,
+        authContext: {
+          authToken: workspace.admin.token,
+          workspaceId: workspace.workspace.id,
+        },
+      }),
+    ).toThrow(/profile approval secret/i);
+    expect(() =>
+      getMcpToolDefinitions(service, { agentApprovals: true, explicitAuth: true }),
+    ).toThrow(/profile-backed MCP/i);
+  });
+
   test('explicit-auth MCP compatibility mode still exposes auth fields', () => {
     const { service } = createService();
     const tools = getMcpToolDefinitions(service, { explicitAuth: true });
@@ -412,6 +658,37 @@ describe('MCP tool contracts', () => {
 });
 
 describe('CLI and watcher', () => {
+  test('server mcp forwards the agent approvals flag to startup', async () => {
+    const calls: any[] = [];
+    const program = new Command();
+    const io = { writeErr: () => undefined, writeOut: () => undefined };
+    program.exitOverride();
+    program.configureOutput({
+      writeErr: () => undefined,
+      writeOut: () => undefined,
+    });
+    registerServerCommands(program, {
+      io,
+      startMcpServer: async (input) => {
+        calls.push(input);
+      },
+    });
+
+    await program.parseAsync(
+      ['node', 'handoff', 'server', 'mcp', '--profile', 'default', '--agent-approvals'],
+      { from: 'node' },
+    );
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        agentApprovals: true,
+        dbPath: '.relay/relay.db',
+        explicitAuth: undefined,
+        profileName: 'default',
+      }),
+    ]);
+  });
+
   test('supports workspace/member setup and ask approval as a CLI fallback', async () => {
     const { dbPath } = createService();
     const created = await runCli([

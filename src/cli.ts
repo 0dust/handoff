@@ -835,10 +835,7 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
   }
 }
 
-function configureOutputRecursively(
-  command: Command,
-  output: OutputConfiguration,
-): void {
+function configureOutputRecursively(command: Command, output: OutputConfiguration): void {
   command.configureOutput(output);
   for (const subcommand of command.commands) {
     configureOutputRecursively(subcommand, output);

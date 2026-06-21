@@ -54,10 +54,10 @@ Many addressed handoff packets between members
 
 There are two roles:
 
-| Role | Who does it | What they do |
-|---|---|---|
-| Workspace host/admin | One person, a dev box, or a small internal server | Hosts the reachable Handoff server, creates the workspace, and invites members. |
-| Member/user | Every teammate, including the host if they also use Handoff | Joins the workspace, configures their coding agent through MCP, sends and receives handoffs from inside the agent. |
+| Role                 | Who does it                                                 | What they do                                                                                                       |
+| -------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Workspace host/admin | One person, a dev box, or a small internal server           | Hosts the reachable Handoff server, creates the workspace, and invites members.                                    |
+| Member/user          | Every teammate, including the host if they also use Handoff | Joins the workspace, configures their coding agent through MCP, sends and receives handoffs from inside the agent. |
 
 The host can also be a normal member. Hosting is an extra responsibility, not a separate kind of user.
 
@@ -285,29 +285,31 @@ Wait for my approval before calling relay_hydrate.
 
 Handoff MCP tools include:
 
-| Tool | Purpose |
-|---|---|
-| `relay_share` | Draft a handoff packet with selected context, findings, evidence, and next steps. |
-| `relay_ask` | Draft a handoff packet that includes a question for the recipient. |
-| `relay_update_draft` | Edit a draft before sender approval. |
-| `relay_approve` | Send a packet or approve a reply with a human approval token. |
-| `relay_inbox` | List packets addressed to the current member. |
-| `relay_view` | Record that a packet was opened for review. |
-| `relay_accept` | Accept a packet before hydration. |
-| `relay_hydrate` | Return bounded context and record a hydration receipt. |
-| `relay_reply` | Draft a reply packet. |
-| `relay_clarify` | Request missing evidence or context. |
-| `relay_decline` | Decline an addressed packet. |
-| `relay_archive` | Archive a readable packet. |
-| `relay_search` | Search permitted packet history without hydrating results. |
-| `relay_history` | List drafts, sent packets, open work, or closed packets. |
-| `relay_audit` | List packet or workspace audit receipts. |
-| `relay_configure_project_alias` | Map a repo or clone alias to a canonical project. |
-| `relay_project_aliases` | List configured project aliases. |
+| Tool                            | Purpose                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `relay_share`                   | Draft a handoff packet with selected context, findings, evidence, and next steps. |
+| `relay_ask`                     | Draft a handoff packet that includes a question for the recipient.                |
+| `relay_update_draft`            | Edit a draft before sender approval.                                              |
+| `relay_approve`                 | Send a packet or approve a reply after human review.                              |
+| `relay_inbox`                   | List packets addressed to the current member.                                     |
+| `relay_view`                    | Record that a packet was opened for review.                                       |
+| `relay_accept`                  | Accept a packet before hydration.                                                 |
+| `relay_hydrate`                 | Return bounded context and record a hydration receipt.                            |
+| `relay_reply`                   | Draft a reply packet.                                                             |
+| `relay_clarify`                 | Request missing evidence or context.                                              |
+| `relay_decline`                 | Decline an addressed packet.                                                      |
+| `relay_archive`                 | Archive a readable packet.                                                        |
+| `relay_search`                  | Search permitted packet history without hydrating results.                        |
+| `relay_history`                 | List drafts, sent packets, open work, or closed packets.                          |
+| `relay_audit`                   | List packet or workspace audit receipts.                                          |
+| `relay_configure_project_alias` | Map a repo or clone alias to a canonical project.                                 |
+| `relay_project_aliases`         | List configured project aliases.                                                  |
 
 ## Approval Flow
 
-Agents can draft and read handoff packets, but they cannot mint approval tokens.
+Handoff supports two approval modes.
+
+Strict mode is the default. Agents can draft and read handoff packets, but they cannot mint approval tokens.
 
 When your agent asks for a send, hydrate, or reply approval token, generate it in a local terminal:
 
@@ -318,6 +320,14 @@ npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
 ```
 
 Paste the short-lived approval token back into the agent instruction. This is a human approval gate, not the handoff mechanism itself.
+
+Agent-confirmed mode is optional for profile-backed MCP sessions. Start MCP with `--agent-approvals`:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default --agent-approvals
+```
+
+In that mode, your agent may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
 
 ## Packet Shape
 
@@ -346,6 +356,7 @@ Full schema notes: [docs/packet-schema.md](docs/packet-schema.md).
 - Sender approval is required before ask/share packets leave the sender.
 - Recipient acceptance and approval are required before ask/share packets hydrate.
 - Reply approval is required before recipient-agent output returns to the sender.
+- Strict mode requires manual approval tokens; optional agent-confirmed mode lets profile-backed MCP request those tokens after explicit user instruction.
 - Approval secrets are not exposed through MCP schemas or config.
 - Member tokens and approval secrets are stored outside profile metadata.
 - Secret-looking content blocks sending by default.

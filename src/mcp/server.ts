@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { RelayApiClient } from '../api/client.js';
 import { packetStatuses } from '../protocol/schema.js';
-import { RelayService } from '../service/relay-service.js';
+import { RelayService, type ApprovalAction } from '../service/relay-service.js';
 import { createBackendForProfile } from '../setup/orchestrator.js';
 import { createProfileStore, resolveProfileName, type ProfileStore } from '../setup/profile.js';
 import { createRelayDatabase } from '../storage/database.js';
@@ -79,11 +79,13 @@ const claimInput = z
 type RelayBackend = RelayService | RelayApiClient;
 
 export interface McpAuthContext {
+  approvalSecret?: string;
   authToken: string;
   workspaceId: string;
 }
 
 export interface McpDefinitionOptions {
+  agentApprovals?: boolean;
   authContext?: McpAuthContext;
   explicitAuth?: boolean;
   profileName?: string;
@@ -101,6 +103,23 @@ export function getMcpToolDefinitions(
   service: RelayBackend,
   options: McpDefinitionOptions = {},
 ): McpToolDefinition[] {
+  const authContext = options.authContext ?? authContextFromProfile(options);
+  const agentApprovals = Boolean(options.agentApprovals);
+  if (agentApprovals && (options.explicitAuth || !authContext?.approvalSecret)) {
+    throw new Error(
+      'Agent-confirmed approvals require profile-backed MCP with a profile approval secret.',
+    );
+  }
+  const agentApprovalSecret = agentApprovals ? authContext?.approvalSecret : undefined;
+  const approvalTokenInput = agentApprovals ? z.string().optional() : z.string();
+  const approveInputSchema: Record<string, z.ZodTypeAny> = {
+    authToken: z.string(),
+    packetId: z.string(),
+    approvalToken: approvalTokenInput,
+  };
+  if (!agentApprovals) {
+    approveInputSchema.allowSecretOverride = z.boolean().optional();
+  }
   const tools: McpToolDefinition[] = [
     {
       name: 'relay_ask',
@@ -202,14 +221,30 @@ export function getMcpToolDefinitions(
     },
     {
       name: 'relay_approve',
-      description: 'Approve and send a drafted ask/share packet or approve a reply packet.',
-      inputSchema: {
-        authToken: z.string(),
-        packetId: z.string(),
-        approvalToken: z.string(),
-        allowSecretOverride: z.boolean().optional(),
+      description:
+        'Approve and send a drafted ask/share packet or approve a reply packet after human review.',
+      inputSchema: approveInputSchema,
+      handler: async (args) => {
+        if (agentApprovals && !args.approvalToken && args.allowSecretOverride) {
+          throw new Error(
+            'Redaction overrides require a manually generated approval token; agent-confirmed approvals cannot override blocked content.',
+          );
+        }
+        const approvalToken = await resolveMcpApprovalToken({
+          action: async () => {
+            const result = await service.getPacketForMember({
+              authToken: args.authToken,
+              packetId: args.packetId,
+            });
+            return result.packet.packet_type === 'reply' ? 'reply' : 'send';
+          },
+          args,
+          approvalSecret: agentApprovalSecret,
+          service,
+          useAgentApprovals: agentApprovals,
+        });
+        return service.approveAndSend({ ...args, approvalToken });
       },
-      handler: async (args) => service.approveAndSend(args),
     },
     {
       name: 'relay_inbox',
@@ -249,15 +284,25 @@ export function getMcpToolDefinitions(
     },
     {
       name: 'relay_hydrate',
-      description: 'Hydrate an accepted packet into agent context and record a hydration receipt.',
+      description:
+        'Hydrate an accepted packet into agent context after human review and record a hydration receipt.',
       inputSchema: {
         authToken: z.string(),
         packetId: z.string(),
         client: z.string().default('generic'),
         sessionId: z.string().optional(),
-        approvalToken: z.string(),
+        approvalToken: approvalTokenInput,
       },
-      handler: async (args) => service.hydratePacket(args),
+      handler: async (args) => {
+        const approvalToken = await resolveMcpApprovalToken({
+          action: 'hydrate',
+          args,
+          approvalSecret: agentApprovalSecret,
+          service,
+          useAgentApprovals: agentApprovals,
+        });
+        return service.hydratePacket({ ...args, approvalToken });
+      },
     },
     {
       name: 'relay_reply',
@@ -338,7 +383,6 @@ export function getMcpToolDefinitions(
       handler: async (args) => service.listAuditReceipts(args),
     },
   ];
-  const authContext = options.authContext ?? authContextFromProfile(options);
   if (options.explicitAuth || !authContext) {
     return tools;
   }
@@ -373,6 +417,7 @@ export function createMcpServer(
 }
 
 export async function startMcpServer(input: {
+  agentApprovals?: boolean;
   dbPath: string;
   explicitAuth?: boolean;
   profileName?: string;
@@ -408,6 +453,10 @@ export async function startMcpServer(input: {
           process.env.HANDOFF_MEMBER_TOKEN ??
           process.env.AGENT_RELAY_TOKEN ??
           storedCredentials.memberToken,
+        approvalSecret:
+          process.env.HANDOFF_APPROVAL_SECRET ??
+          process.env.AGENT_RELAY_APPROVAL_SECRET ??
+          storedCredentials.approvalSecret,
       }
     : undefined;
   const service =
@@ -417,9 +466,16 @@ export async function startMcpServer(input: {
         ? new RelayApiClient({ serverUrl: input.serverUrl })
         : new RelayService(createRelayDatabase(input.dbPath));
   const server = createMcpServer(service, {
+    agentApprovals: input.agentApprovals,
+    authContext:
+      profile && credentials
+        ? {
+            approvalSecret: credentials.approvalSecret,
+            authToken: credentials.memberToken,
+            workspaceId: profile.workspaceId,
+          }
+        : undefined,
     explicitAuth: input.explicitAuth || !profile,
-    profileName: input.profileName,
-    profileStore,
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -445,8 +501,41 @@ function authContextFromProfile(options: McpDefinitionOptions): McpAuthContext |
   const workspaceId = process.env.HANDOFF_WORKSPACE_ID ?? profile.workspaceId;
   const authToken =
     process.env.HANDOFF_MEMBER_TOKEN ?? process.env.AGENT_RELAY_TOKEN ?? credentials.memberToken;
+  const approvalSecret =
+    process.env.HANDOFF_APPROVAL_SECRET ??
+    process.env.AGENT_RELAY_APPROVAL_SECRET ??
+    credentials.approvalSecret;
   return {
+    approvalSecret,
     authToken,
     workspaceId,
   };
+}
+
+async function resolveMcpApprovalToken(input: {
+  action: ApprovalAction | (() => Promise<ApprovalAction>);
+  args: { authToken: string; approvalToken?: string; packetId: string };
+  approvalSecret?: string;
+  service: RelayBackend;
+  useAgentApprovals: boolean;
+}): Promise<string | undefined> {
+  if (input.args.approvalToken) {
+    return input.args.approvalToken;
+  }
+  if (!input.useAgentApprovals) {
+    return undefined;
+  }
+  if (!input.approvalSecret) {
+    throw new Error(
+      'Agent-confirmed approvals require profile-backed MCP with a profile approval secret.',
+    );
+  }
+  const action = typeof input.action === 'function' ? await input.action() : input.action;
+  const approval = await input.service.createApprovalToken({
+    authToken: input.args.authToken,
+    approvalSecret: input.approvalSecret,
+    packetId: input.args.packetId,
+    action,
+  });
+  return approval.approval_token;
 }

@@ -11,6 +11,7 @@ npx -y @0dust/handoff join http://<host>:3737/invite/<invite-token>
 Plain `start` is still useful for local demos and CI smoke tests, but its loopback invite links are not the normal teammate handoff path.
 
 The commands below intentionally expose low-level details: DB paths, server URLs, workspace IDs, member tokens, and approval secrets.
+They document the strict approval-token flow. For profile-backed MCP sessions that treat explicit agent-chat instruction as approval, use `server mcp --profile default --agent-approvals` instead of explicit-auth mode.
 
 ## Start A Coordination Server
 

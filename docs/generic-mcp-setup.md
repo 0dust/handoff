@@ -51,6 +51,21 @@ Use profile mode for normal agent sessions:
 
 In this mode, Handoff injects the member token and workspace ID from the local profile. Normal MCP tool schemas omit `authToken` and `workspaceId`. Approval secrets are never exposed through MCP.
 
+Strict approval remains the default. If you want the local agent session to treat your explicit chat instruction as approval, add `--agent-approvals`:
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default", "--agent-approvals"]
+    }
+  }
+}
+```
+
+With that flag, the MCP process requests and consumes short-lived approval tokens through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API.
+
 ## Cursor
 
 In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
@@ -125,12 +140,12 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_update_draft`: edit a draft before sender approval.
 - `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name.
 - `relay_project_aliases`: lists workspace project/repo aliases.
-- `relay_approve`: approves and sends ask/share packets, or approves reply packets. Requires a human approval token generated outside MCP.
+- `relay_approve`: approves and sends ask/share packets, or approves reply packets. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
 - `relay_inbox`: lists packets addressed to the current member.
 - `relay_status`: fetches a readable packet.
 - `relay_view`: records a review view.
 - `relay_accept`: records recipient acceptance before hydration.
-- `relay_hydrate`: returns bounded context plus a hydration receipt. Requires a human hydration approval token generated outside MCP.
+- `relay_hydrate`: returns bounded context plus a hydration receipt. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.
 - `relay_reply`: drafts a reply packet; returns `pending_recipient_approval`.
 - `relay_clarify`: requests more information or evidence from the sender after packet review.
 - `relay_decline`: declines an addressed packet.
@@ -139,7 +154,7 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_history`: lists drafts, sent packets, open work, or closed packets with typed filters.
 - `relay_audit`: lists packet audit receipts, or workspace receipts for admins.
 
-Generate approval tokens through the local CLI:
+In strict mode, generate approval tokens through the local CLI:
 
 ```bash
 npx -y @0dust/handoff approval-token <packet-id> --action send
