@@ -70,9 +70,9 @@ Alice does not run `start` for Sam's workspace. She needs Node 20+ with `npx`, t
 
 If Alice is not on the same LAN, host Handoff somewhere she can reach and pass that URL with `--public-url`, or use the dedicated server path in [Local self-hosting](docs/local-self-hosting.md).
 
-`doctor` may report `WARN` for `mcp_config` until you add Handoff to Codex, Claude Code, Cursor, or another MCP client. That warning means the local setup is healthy, but agent access has not been wired yet.
+Do not stop here for real use. These commands create the shared Handoff workspace; the actual handoff workflow happens through Codex, Claude Code, Cursor, or another MCP client.
 
-If you want Handoff to write an MCP config for a supported client, pass an explicit install target:
+Next, wire Handoff into each user's agent. If you use Codex or Cursor, let Handoff write the MCP config:
 
 ```bash
 # choose the client you use
@@ -81,6 +81,8 @@ npx -y @0dust/handoff start --lan --install-mcp cursor
 npx -y @0dust/handoff join <invite-link> --install-mcp codex
 npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
+
+For Claude Code or another MCP client, add the profile-backed MCP command from [MCP setup](#mcp-setup). `doctor` may report `WARN` for `mcp_config` until this is done. That warning means the workspace exists, but the agent is not wired to Handoff yet.
 
 ### Local Demo Mode
 
@@ -99,9 +101,80 @@ npx -y @0dust/handoff join http://<host>:<port>/invite/<invite-token>
 
 Opening the invite URL in a browser only shows the same join command. The invite is accepted only when the teammate runs `handoff join`.
 
+### What Is Actually Set Up?
+
+Handoff has setup plumbing and agent integration. Only the agent integration is the product workflow.
+
+| Layer | What it enables | Commands |
+|---|---|---|
+| Workspace foundation | Sam and Alice have profiles, credentials, and a shared reachable workspace. This is required infrastructure, not the handoff UX. | `start --lan`, `invite`, `join`, `doctor` |
+| Agent MCP integration | Codex, Claude Code, Cursor, or another MCP client can see Handoff tools such as `relay_share`, `relay_inbox`, and `relay_hydrate`. This is the real user workflow. | `--install-mcp codex`, `--install-mcp cursor`, or Claude/Generic MCP config |
+| Human approval gate | A terminal command mints short-lived approval tokens after a local confirmation phrase. This is a security step, not a manual handoff path. | `approval-token` |
+
+The workspace foundation is not enough for the product experience. Handoff is ready when each person's coding agent can see the Handoff MCP tools.
+
+`doctor` makes this distinction explicit:
+
+- `OK` setup checks mean the Handoff profile/workspace/server are usable.
+- `WARN mcp_config` means the workspace setup works, but your coding agent is not wired to Handoff yet.
+
+For the full product flow, Sam and Alice should both finish with:
+
+```text
+Handoff profile works + MCP tools are visible inside the agent they use.
+```
+
+### Ask An Agent To Set It Up
+
+Most users should not wire this by hand. Give your coding agent the repo path and this instruction.
+
+If the npm package is live, the agent can use `npx -y @0dust/handoff`. If you are testing from a local checkout, tell the agent to run:
+
+```bash
+cd /path/to/handoff
+pnpm install
+pnpm build
+```
+
+Then use `node /path/to/handoff/dist/cli.js` anywhere the examples say `npx -y @0dust/handoff`.
+
+For Sam, the host:
+
+```text
+Set up Handoff for a teammate handoff from this repo.
+
+1. Use the published package with `npx -y @0dust/handoff`, or build this checkout and use `node /path/to/handoff/dist/cli.js`.
+2. Do not stop after CLI setup; the goal is to make Handoff usable from my coding agent.
+3. Run `npx -y @0dust/handoff start --lan`.
+4. If I use Codex, run `npx -y @0dust/handoff start --lan --install-mcp codex` instead.
+   If I use Cursor, run `npx -y @0dust/handoff start --lan --install-mcp cursor` instead.
+   If I use Claude Code, show me the `claude mcp add-json` command or MCP JSON from the README.
+5. Run `npx -y @0dust/handoff invite alice`.
+6. Give me the exact join command to send Alice.
+7. Run `npx -y @0dust/handoff doctor` and explain whether any warning is only MCP config or a real setup failure.
+8. Confirm that my coding agent can see Handoff MCP tools, or tell me exactly what remains.
+9. Tell me whether I need to restart Codex, Claude Code, Cursor, or another MCP client after config changes.
+```
+
+For Alice, the recipient:
+
+```text
+Set up my machine to join Sam's Handoff workspace.
+
+1. Use the published package with `npx -y @0dust/handoff`, or build this checkout and use `node /path/to/handoff/dist/cli.js`.
+2. Do not stop after joining; the goal is to make Handoff usable from my coding agent.
+3. Run the `npx -y @0dust/handoff join ...` command Sam sent me.
+4. If I use Codex, add `--install-mcp codex` to the join command.
+   If I use Cursor, add `--install-mcp cursor` to the join command.
+   If I use Claude Code, show me the `claude mcp add-json` command or MCP JSON from the README after join succeeds.
+5. Run `npx -y @0dust/handoff doctor`.
+6. Confirm that my profile can reach Sam's Handoff server and that my coding agent can see Handoff MCP tools, or tell me exactly what remains.
+7. Tell me whether I need to restart Codex, Claude Code, Cursor, or another MCP client after config changes.
+```
+
 ## Use It From Your Agent
 
-After MCP setup, ask your agent to package the current investigation:
+This is the main product workflow. After MCP setup, ask your agent to package the current investigation:
 
 ```text
 /share-with @alice
@@ -396,6 +469,8 @@ Full schema notes: [docs/packet-schema.md](docs/packet-schema.md).
 More detail: [docs/security-privacy.md](docs/security-privacy.md).
 
 ## Commands
+
+These commands exist for setup, administration, approvals, automation, and debugging. For normal teammate handoff, use the MCP tools from Codex, Claude Code, Cursor, or another MCP client instead of manually recreating packets in the terminal.
 
 ```bash
 handoff start

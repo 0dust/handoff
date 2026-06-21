@@ -35,7 +35,7 @@ What is included:
 - Fastify coordination API.
 - MCP server for Claude Code, Codex, and generic MCP clients.
 - Profile-backed setup with `start`, `invite`, `join`, and `doctor`.
-- CLI fallback for setup, member/project-alias flows, ask/share/update-draft/reply/clarify/inbox/status/hydrate/decline/archive/history/audit/watch/demo.
+- CLI support for setup, admin flows, approval tokens, debugging, watch, and demos. Normal handoffs happen through MCP tools inside the coding agent.
 - Audit and hydration receipts.
 - Local polling watcher with terminal output, best-effort desktop notifications, and generic webhook posts.
 - Docs, examples, and a five-minute two-user demo.
@@ -57,6 +57,8 @@ npx -y @0dust/handoff invite alice
 # Alice joins from her machine
 npx -y @0dust/handoff join http://<host>:3737/invite/<invite-token>
 npx -y @0dust/handoff doctor
+
+# Then wire Handoff into Codex, Claude Code, Cursor, or another MCP client.
 ```
 
 ## Comparison
