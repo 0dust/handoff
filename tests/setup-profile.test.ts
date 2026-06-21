@@ -33,6 +33,7 @@ import {
   writeServerMetadata,
   type ServerMetadata,
 } from '../src/setup/lifecycle.js';
+import { detectMcpConfigs, installMcpConfig } from '../src/setup/mcp-config.js';
 import { createProfileStore } from '../src/setup/profile.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createRelayDatabase } from '../src/storage/database.js';
@@ -391,6 +392,38 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       '@0dust/handoff',
     );
     expect(inbox).toEqual([]);
+  });
+
+  test('CLI join output shows the profile-backed MCP command without start install hints', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = aliceHome;
+      process.env.HANDOFF_HOME = aliceHome;
+
+      const result = await runCli(['join', invite.inviteLink]);
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain(
+        'Command: npx -y @0dust/handoff server mcp --profile default',
+      );
+      expect(result.stdout).not.toContain('start --install-mcp');
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
   });
 
   test('doctor reports missing and healthy states, including JSON-safe output', async () => {
@@ -872,6 +905,95 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       if (previousUserHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousUserHome;
     }
+  });
+
+  test('Codex MCP install replaces an existing explicit-auth Handoff table', () => {
+    const home = tempHome();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    const configPath = join(home, '.codex', 'config.toml');
+    writeFileSync(
+      configPath,
+      [
+        '[workspace]',
+        'trusted = true',
+        '',
+        '[mcp_servers.handoff]',
+        'command = "npx"',
+        'args = ["-y", "@0dust/handoff", "server", "mcp", "--explicit-auth"]',
+        'startup_timeout_sec = 10',
+        '',
+        '[mcp_servers.other]',
+        'command = "other-tool"',
+      ].join('\n'),
+    );
+
+    const status = installMcpConfig({
+      client: 'codex',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const config = readFileSync(configPath, 'utf8');
+
+    expect(status.installed).toBe(true);
+    expect(config.match(/^\[mcp_servers\.handoff\]$/gm)).toHaveLength(1);
+    expect(config).toContain(
+      'args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]',
+    );
+    expect(config).not.toContain('--explicit-auth');
+    expect(config).toContain('[mcp_servers.other]');
+  });
+
+  test('JSON MCP detection ignores explicit-auth on unrelated servers', () => {
+    const home = tempHome();
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(
+      join(home, '.cursor', 'mcp.json'),
+      `${JSON.stringify(
+        {
+          mcpServers: {
+            legacy: {
+              command: 'npx',
+              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--explicit-auth'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude.json'),
+      `${JSON.stringify(
+        {
+          mcpServers: {
+            handoff: {
+              command: 'npx',
+              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--profile', 'default'],
+            },
+            legacy: {
+              command: 'npx',
+              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--explicit-auth'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const cursorStatus = installMcpConfig({
+      client: 'cursor',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const statuses = detectMcpConfigs({ env: { HOME: home }, profileName: 'default' });
+
+    expect(cursorStatus.installed).toBe(true);
+    expect(statuses).toContainEqual(expect.objectContaining({ client: 'cursor', installed: true }));
+    expect(statuses).toContainEqual(
+      expect.objectContaining({ client: 'claude-code', installed: true }),
+    );
   });
 
   test('start --foreground is rejected instead of spawning a misleading background server', async () => {

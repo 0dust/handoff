@@ -66,11 +66,8 @@ export function installMcpConfig(input: {
     const path = join(home, '.codex', 'config.toml');
     mkdirSync(dirname(path), { recursive: true });
     const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    if (!configContainsProfileCommand(existing, input.profileName)) {
-      writeFileSync(
-        path,
-        `${existing.trimEnd()}${existing.trim() ? '\n\n' : ''}${codexToml(input.profileName)}\n`,
-      );
+    if (!codexConfigContainsProfileCommand(existing, input.profileName)) {
+      writeFileSync(path, upsertCodexHandoffTable(existing, input.profileName));
     }
     return configStatus('codex', path, input.profileName);
   }
@@ -105,10 +102,37 @@ function configStatus(
   const contents = present ? readFileSync(path, 'utf8') : '';
   return {
     client,
-    installed: configContainsProfileCommand(contents, profileName),
+    installed: configContainsClientProfileCommand(client, contents, profileName),
     path,
     present,
   };
+}
+
+function configContainsClientProfileCommand(
+  client: McpClientId,
+  contents: string,
+  profileName: string,
+): boolean {
+  if (client === 'codex') {
+    return codexConfigContainsProfileCommand(contents, profileName);
+  }
+  return jsonMcpConfigContainsProfileCommand(contents, profileName);
+}
+
+function codexConfigContainsProfileCommand(contents: string, profileName: string): boolean {
+  const section = codexHandoffTable(contents);
+  return section ? configContainsProfileCommand(section, profileName) : false;
+}
+
+function jsonMcpConfigContainsProfileCommand(contents: string, profileName: string): boolean {
+  if (!contents.trim()) return false;
+  try {
+    const config = JSON.parse(contents) as { mcpServers?: Record<string, unknown> };
+    const handoff = config.mcpServers?.handoff;
+    return handoff ? configContainsProfileCommand(JSON.stringify(handoff), profileName) : false;
+  } catch {
+    return false;
+  }
 }
 
 function configContainsProfileCommand(contents: string, profileName: string): boolean {
@@ -120,6 +144,39 @@ function configContainsProfileCommand(contents: string, profileName: string): bo
     contents.includes(profileName) &&
     !contents.includes('--explicit-auth')
   );
+}
+
+function upsertCodexHandoffTable(contents: string, profileName: string): string {
+  const replacement = codexToml(profileName);
+  const range = codexHandoffTableRange(contents);
+  if (!range) {
+    return `${contents.trimEnd()}${contents.trim() ? '\n\n' : ''}${replacement}\n`;
+  }
+  const lines = contents.split('\n');
+  const before = lines.slice(0, range.start).join('\n').trimEnd();
+  const after = lines.slice(range.end).join('\n').trimStart();
+  return `${before}${before ? '\n\n' : ''}${replacement}${after ? `\n\n${after}` : ''}\n`;
+}
+
+function codexHandoffTable(contents: string): string | undefined {
+  const range = codexHandoffTableRange(contents);
+  if (!range) return undefined;
+  return contents.split('\n').slice(range.start, range.end).join('\n');
+}
+
+function codexHandoffTableRange(contents: string): { end: number; start: number } | undefined {
+  const lines = contents.split('\n');
+  const start = lines.findIndex((line) => line.trim() === '[mcp_servers.handoff]');
+  if (start === -1) return undefined;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (/^\[[^\]]+\]$/.test(trimmed) && !trimmed.startsWith('[mcp_servers.handoff.')) {
+      end = index;
+      break;
+    }
+  }
+  return { end, start };
 }
 
 function installCommands(profileName: string): string[] {
