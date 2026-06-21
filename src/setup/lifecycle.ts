@@ -95,7 +95,7 @@ export async function findAvailablePort(input: {
 }): Promise<number> {
   const maxAttempts = input.maxAttempts ?? 50;
   for (let offset = 0; offset < maxAttempts; offset += 1) {
-    const port = input.preferredPort + offset;
+    const port = candidatePort(input.preferredPort, offset);
     if (await canListen(input.host, port)) {
       return port;
     }
@@ -383,6 +383,15 @@ function canListen(host: string, port: number): Promise<boolean> {
     });
     server.listen(port, host);
   });
+}
+
+function candidatePort(preferredPort: number, offset: number): number {
+  const maxPort = 65_535;
+  const minFallbackPort = 1_024;
+  const port = preferredPort + offset;
+  if (port <= maxPort) return port;
+  const fallbackRange = maxPort - minFallbackPort + 1;
+  return minFallbackPort + ((port - maxPort - 1) % fallbackRange);
 }
 
 function isPrivateIpv4(address: string): boolean {

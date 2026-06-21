@@ -142,7 +142,13 @@ function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>)
   if (result.server.warning) {
     lines.push(`Warning: ${result.server.warning}`);
   }
-  lines.push('', ...formatMcpSetupHuman(result.mcp), '', 'Next:', result.nextCommand);
+  lines.push(
+    '',
+    ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'start' }),
+    '',
+    'Next:',
+    result.nextCommand,
+  );
   return lines.join('\n');
 }
 
@@ -176,14 +182,17 @@ function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string
     `Profile: ${result.profile.profileName}`,
     `Server: ${result.profile.serverUrl}`,
     '',
-    ...formatMcpSetupHuman(result.mcp),
+    ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'manual' }),
     '',
     'Agent prompt:',
     result.nextAgentInstruction,
   ].join('\n');
 }
 
-function formatMcpSetupHuman(mcp: Awaited<ReturnType<typeof startHandoffSetup>>['mcp']): string[] {
+function formatMcpSetupHuman(
+  mcp: Awaited<ReturnType<typeof startHandoffSetup>>['mcp'],
+  options: { missingInstallHint: 'manual' | 'start' },
+): string[] {
   const lines = ['MCP setup:', `Command: ${mcp.command}`];
   const installed = mcp.configs.filter((config) => config.installed);
   if (installed.length > 0) {
@@ -196,8 +205,22 @@ function formatMcpSetupHuman(mcp: Awaited<ReturnType<typeof startHandoffSetup>>[
   } else {
     lines.push('Status: not detected in Codex, Claude Code, or Cursor config yet.');
   }
-  lines.push('Install for Codex: npx -y @0dust/handoff start --install-mcp codex');
-  lines.push('Install for Cursor: npx -y @0dust/handoff start --install-mcp cursor');
+  if (options.missingInstallHint === 'start') {
+    lines.push('Install for Codex: npx -y @0dust/handoff start --install-mcp codex');
+    lines.push('Install for Cursor: npx -y @0dust/handoff start --install-mcp cursor');
+  } else {
+    lines.push(
+      `Codex config: ${
+        mcp.installCommands.find((command) => command.startsWith('Add to ~/.codex/')) ?? mcp.command
+      }`,
+    );
+    lines.push(
+      `Cursor config: ${
+        mcp.installCommands.find((command) => command.startsWith('Add to ~/.cursor/')) ??
+        mcp.command
+      }`,
+    );
+  }
   lines.push(
     `Claude Code: ${
       mcp.installCommands.find((command) => command.startsWith('claude ')) ??

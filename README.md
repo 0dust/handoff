@@ -292,6 +292,7 @@ Handoff MCP tools include:
 | `relay_update_draft`            | Edit a draft before sender approval.                                              |
 | `relay_approve`                 | Send a packet or approve a reply after human review.                              |
 | `relay_inbox`                   | List packets addressed to the current member.                                     |
+| `relay_status`                  | Fetch the latest readable packet status.                                          |
 | `relay_view`                    | Record that a packet was opened for review.                                       |
 | `relay_accept`                  | Accept a packet before hydration.                                                 |
 | `relay_hydrate`                 | Return bounded context and record a hydration receipt.                            |
