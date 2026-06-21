@@ -239,6 +239,19 @@ function rowToWorkspace(row: WorkspaceRow): WorkspaceRecord {
   };
 }
 
+function rowToInvite(row: InviteRow): InviteRecord {
+  return {
+    id: row.id,
+    workspace_id: row.workspace_id,
+    handle: row.handle,
+    token: row.token,
+    created_by_member_id: row.created_by_member_id,
+    expires_at: row.expires_at,
+    accepted_at: row.accepted_at ?? undefined,
+    created_at: row.created_at,
+  };
+}
+
 function rowToProjectAlias(row: ProjectAliasRow): ProjectAliasRecord {
   return {
     id: row.id,
@@ -495,6 +508,19 @@ export class RelayService {
     transaction();
 
     return { member, workspace };
+  }
+
+  getInvite(input: { inviteToken: string }): { invite: InviteRecord; workspace: WorkspaceRecord } {
+    const inviteRow = this.db
+      .prepare('SELECT * FROM invites WHERE token = ?')
+      .get(input.inviteToken) as InviteRow | undefined;
+    if (!inviteRow) {
+      throw relayError('NOT_FOUND', 'Invite not found.', 404);
+    }
+    return {
+      invite: rowToInvite(inviteRow),
+      workspace: this.getWorkspace(inviteRow.workspace_id),
+    };
   }
 
   listMembers(input: { authToken: string; workspaceId: string }): MemberRecord[] {

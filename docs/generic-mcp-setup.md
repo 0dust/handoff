@@ -2,63 +2,111 @@
 
 Handoff is a stdio MCP server. Any MCP client that can launch a command with arguments can use it.
 
-## Local Checkout
+Run setup first:
 
-```json
-{
-  "mcpServers": {
-    "handoff": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/handoff/dist/cli.js",
-        "server",
-        "mcp",
-        "--db",
-        "/absolute/path/to/relay.db"
-      ]
-    }
-  }
-}
+```bash
+npx -y @0dust/handoff start
+npx -y @0dust/handoff doctor
 ```
 
-For a shared coordination server:
+Handoff can write MCP config for Codex and Cursor when you ask explicitly:
 
-```json
-{
-  "mcpServers": {
-    "handoff": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/handoff/dist/cli.js",
-        "server",
-        "mcp",
-        "--server-url",
-        "http://127.0.0.1:3737"
-      ]
-    }
-  }
-}
+```bash
+npx -y @0dust/handoff start --install-mcp codex
+npx -y @0dust/handoff start --install-mcp cursor
 ```
 
-## Published Package
+For Claude Code and other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
+
+## Profile-Backed Config
+
+Use profile mode for normal agent sessions:
 
 ```json
 {
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--db", "/absolute/path/to/relay.db"]
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
     }
   }
 }
 ```
+
+In this mode, Handoff injects the member token and workspace ID from the local profile. Normal MCP tool schemas omit `authToken` and `workspaceId`. Approval secrets are never exposed through MCP.
+
+## Cursor
+
+In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
+
+```bash
+npx -y @0dust/handoff start --install-mcp cursor
+```
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+    }
+  }
+}
+```
+
+Then ask Cursor Agent:
+
+```text
+Use Handoff to package the current investigation context for @alice.
+Show me the Relay Packet before sending.
+```
+
+## LAN And Remote Profiles
+
+For LAN setup:
+
+```bash
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
+```
+
+For remote/self-hosted setups, users should `join` an invite link from that server. The saved profile records the remote server URL, so the MCP command stays the same:
+
+```bash
+npx -y @0dust/handoff server mcp --profile default
+```
+
+## Explicit-Auth Compatibility
+
+For advanced scripts and tests that intentionally pass auth through tool inputs:
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@0dust/handoff",
+        "server",
+        "mcp",
+        "--server-url",
+        "http://127.0.0.1:3737",
+        "--explicit-auth"
+      ]
+    }
+  }
+}
+```
+
+Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put approval secrets in config.
 
 ## Tool Contract
 
 - `relay_ask`: draft an ask packet; returns `pending_sender_approval`.
 - `relay_share`: draft a share packet; returns `pending_sender_approval`.
 - `relay_update_draft`: edit a draft before sender approval.
-- `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name. Requires a workspace admin token.
+- `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name.
 - `relay_project_aliases`: lists workspace project/repo aliases.
 - `relay_approve`: approves and sends ask/share packets, or approves reply packets. Requires a human approval token generated outside MCP.
 - `relay_inbox`: lists packets addressed to the current member.
@@ -70,20 +118,14 @@ For a shared coordination server:
 - `relay_clarify`: requests more information or evidence from the sender after packet review.
 - `relay_decline`: declines an addressed packet.
 - `relay_archive`: archives a readable packet.
-- `relay_search`: searches only permitted packet history and never hydrates results. Supports typed project, sender, recipient, status, file/symbol, and ticket/PR filters.
-- `relay_history`: lists permitted packet history using `drafts`, `sent`, `open`, or `closed` filters plus the same typed filters as search.
+- `relay_search`: searches only permitted packet history and never hydrates results.
+- `relay_history`: lists drafts, sent packets, open work, or closed packets with typed filters.
 - `relay_audit`: lists packet audit receipts, or workspace receipts for admins.
 
-All tools require a Relay member token. Keep member tokens in your local MCP client config or local secret manager, not in committed project files.
-
-Approval tokens are intentionally not exposed as MCP tools. Generate them through a local CLI/UI confirmation step; the command prompts for an exact phrase and requires the separate per-member approval secret before it asks the coordination API to mint the token:
+Generate approval tokens through the local CLI:
 
 ```bash
-node dist/cli.js approval-token <packet-id> --server-url http://127.0.0.1:3737 --token <member-token> --approval-secret <approval-secret> --action send
-node dist/cli.js approval-token <packet-id> --server-url http://127.0.0.1:3737 --token <member-token> --approval-secret <approval-secret> --action hydrate
-node dist/cli.js approval-token <reply-packet-id> --server-url http://127.0.0.1:3737 --token <member-token> --approval-secret <approval-secret> --action reply
+npx -y @0dust/handoff approval-token <packet-id> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
 ```
-
-You may set `AGENT_RELAY_APPROVAL_SECRET` in the terminal running approval commands instead of passing `--approval-secret`. Do not put approval secrets in MCP server config.
-
-For clarification, ask the MCP client to call `relay_clarify` with the packet id, the clarification question, and optional `requestedEvidence` labels. This creates a structured clarification packet back to the sender.

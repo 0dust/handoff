@@ -1,79 +1,118 @@
 # Local Self-Hosting
 
-Handoff is local-first. You can run everything on one machine for a demo or point multiple teammates at the same coordination server on a trusted host.
+Handoff is local-first. The simple path creates a local profile and server:
+
+```bash
+npx -y @0dust/handoff start
+npx -y @0dust/handoff doctor
+```
+
+For teammates on the same Wi-Fi:
+
+```bash
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
+```
+
+Plain `start` resets the active profile to local-only invite links. Re-run `start --lan` or pass `--public-url` before creating new invites that another machine should join.
+
+For a dedicated trusted host, run one coordination server and have teammates join an invite from that server.
 
 ## Coordination Server
 
 ```bash
-pnpm build
-node dist/cli.js server start --db /srv/handoff/relay.db --host 127.0.0.1 --port 3737
+npx -y @0dust/handoff server start \
+  --db /srv/handoff/relay.db \
+  --host 10.0.0.10 \
+  --port 3737
 ```
 
-For a LAN host, bind to a private interface and put access behind your normal network controls:
+Put the host behind your normal network controls. Handoff does not provide a hosted cloud service.
+
+For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
 
 ```bash
-node dist/cli.js server start --db /srv/handoff/relay.db --host 10.0.0.10 --port 3737
+npx -y @0dust/handoff server status
+npx -y @0dust/handoff server stop
 ```
 
-## MCP Server
+## Profiles For Teammates
 
-Each user runs a local MCP stdio process near their coding agent:
+Create a workspace and invite members with the advanced commands, or run `start --lan` on the host machine and use the printed invite command.
+
+After a teammate runs:
 
 ```bash
-node dist/cli.js server mcp --db /srv/handoff/relay.db
+npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token>
 ```
 
-For multi-host teammate use, run the Fastify API on the shared host and point each local MCP server at it:
+their local profile stores the server URL, member token, workspace ID, and approval secret. They can install one supported local MCP config while joining:
 
 ```bash
-node dist/cli.js server mcp --server-url http://10.0.0.10:3737
+npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token> --install-mcp codex
+# or
+npx -y @0dust/handoff join http://10.0.0.10:3737/invite/<invite-token> --install-mcp cursor
 ```
 
-CLI commands use the same API-backed mode:
+Their MCP command stays profile-backed:
 
 ```bash
-node dist/cli.js inbox --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id>
+npx -y @0dust/handoff server mcp --profile default
+```
+
+## Explicit Server-Backed Commands
+
+Low-level server-backed commands remain available for automation:
+
+```bash
+npx -y @0dust/handoff inbox \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --workspace <workspace-id>
 ```
 
 Configure project/repo aliases once per workspace so clone names and local repo aliases resolve to the same packet history:
 
 ```bash
-node dist/cli.js workspace alias set --server-url http://10.0.0.10:3737 --token <admin-token> --workspace <workspace-id> --canonical handoff --alias relay-local --json
-node dist/cli.js workspace alias list --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --json
+npx -y @0dust/handoff workspace alias set \
+  --server-url http://10.0.0.10:3737 \
+  --token <admin-token> \
+  --workspace <workspace-id> \
+  --canonical handoff \
+  --alias relay-local \
+  --json
+
+npx -y @0dust/handoff workspace alias list \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --workspace <workspace-id> \
+  --json
 ```
 
-Human approval tokens still come from each teammate's local CLI renderer:
+## Approval Tokens
+
+Profile-backed approval tokens use the local profile:
 
 ```bash
-node dist/cli.js approval-token <packet-id> --server-url http://10.0.0.10:3737 --token <token> --approval-secret <approval-secret> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action hydrate
 ```
 
-The approval secret is returned once during workspace creation or invite acceptance. Keep it outside MCP config; `AGENT_RELAY_APPROVAL_SECRET` is supported for the terminal running approval commands.
-
-Rotate a member token through the same server-backed path:
+Explicit approval-token mode remains available:
 
 ```bash
-node dist/cli.js member rotate-token --server-url http://10.0.0.10:3737 --token <current-token> --json
+npx -y @0dust/handoff approval-token <packet-id> \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --approval-secret <approval-secret> \
+  --action send
 ```
 
-Rotate a leaked approval secret without changing the member token or member id:
-
-```bash
-node dist/cli.js member rotate-approval-secret --server-url http://10.0.0.10:3737 --token <current-token> --approval-secret <current-approval-secret> --json
-```
-
-Inspect history and audit metadata through the server:
-
-```bash
-node dist/cli.js history --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --filter open --json
-node dist/cli.js history --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --project relay-local --sender @sam --recipient @alice --status delivered --file-symbol refreshSession --ticket-pr REL-7 --json
-node dist/cli.js search --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --project handoff --query "auth refresh" --json
-node dist/cli.js audit --server-url http://10.0.0.10:3737 --token <admin-token> --workspace <workspace-id> --json
-```
+Approval secrets stay outside MCP config. `HANDOFF_APPROVAL_SECRET` and the older `AGENT_RELAY_APPROVAL_SECRET` alias are supported for the terminal running approval commands.
 
 ## SQLite Operations
 
-- The coordination server database path is controlled with `--db` or `AGENT_RELAY_DB`.
+- The coordination server database path is controlled with `--db`, `HANDOFF_DB`, or `AGENT_RELAY_DB`.
 - Back up the main `.db` file plus WAL/SHM files when WAL mode is active.
 - Treat the database as sensitive: packet bodies and token hashes live there.
 - Do not put `.relay/*.db` in git.
@@ -83,19 +122,40 @@ node dist/cli.js audit --server-url http://10.0.0.10:3737 --token <admin-token> 
 Terminal polling watcher:
 
 ```bash
-node dist/cli.js watch --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --interval 5000
+npx -y @0dust/handoff watch \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --workspace <workspace-id> \
+  --interval 5000
 ```
 
 Add best-effort native desktop notifications on the machine running the watcher:
 
 ```bash
-node dist/cli.js watch --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --desktop-notifications
+npx -y @0dust/handoff watch \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --workspace <workspace-id> \
+  --desktop-notifications
 ```
 
 Post concise notification summaries to a generic webhook endpoint:
 
 ```bash
-node dist/cli.js watch --server-url http://10.0.0.10:3737 --token <token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay --webhook-header "Authorization: Bearer <token>"
+npx -y @0dust/handoff watch \
+  --server-url http://10.0.0.10:3737 \
+  --token <token> \
+  --workspace <workspace-id> \
+  --webhook-url https://hooks.example.test/relay \
+  --webhook-header "Authorization: Bearer <token>"
 ```
 
 The watcher always uses polling. Terminal, desktop, and webhook notifications include sender handle, packet type, title, project, summary, and the open/review action, but never evidence bodies or raw transcripts. For scripts or tests, use `--once` to poll a single time and exit.
+
+## From A Local Checkout
+
+```bash
+pnpm install
+pnpm build
+node dist/cli.js server start --db /srv/handoff/relay.db --host 10.0.0.10 --port 3737
+```

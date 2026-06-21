@@ -44,7 +44,16 @@
   },
   "files": [
     "dist",
-    "docs/*.md",
+    "docs/advanced-manual-setup.md",
+    "docs/claude-code-setup.md",
+    "docs/codex-setup.md",
+    "docs/demo-video-script.md",
+    "docs/generic-mcp-setup.md",
+    "docs/launch-copy.md",
+    "docs/local-self-hosting.md",
+    "docs/packet-schema.md",
+    "docs/security-privacy.md",
+    "docs/troubleshooting.md",
     "examples",
     "fixtures",
     "README.md"

@@ -7,3 +7,4 @@ coverage/
 *.db
 *.db-shm
 *.db-wal
+docs/prd-*.md

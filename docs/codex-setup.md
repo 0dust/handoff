@@ -1,28 +1,90 @@
 # Codex Setup
 
-Handoff exposes a stdio MCP server and a CLI fallback. Codex configuration supports MCP server entries in `config.toml`; OpenAI's current docs describe user-level config at `~/.codex/config.toml`, project-scoped `.codex/config.toml`, and MCP server keys such as `command`, `cwd`, `env`, `startup_timeout_sec`, and `tool_timeout_sec`. Official reference: [Codex config basics](https://developers.openai.com/codex/config-basic) and [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+Handoff runs as a local stdio MCP server. Run setup first:
 
-## Published Package Form
+```bash
+npx -y @0dust/handoff start
+npx -y @0dust/handoff doctor
+```
 
-Add this to your trusted Codex config:
+To let Handoff write a global Codex MCP entry, run:
+
+```bash
+npx -y @0dust/handoff start --install-mcp codex
+```
+
+For a teammate on the same Wi-Fi:
+
+```bash
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
+```
+
+## Add Handoff To Codex
+
+Codex stores MCP configuration in `~/.codex/config.toml` by default, and trusted projects can use `.codex/config.toml`. The CLI and IDE extension share this config.
+
+If you did not use `--install-mcp codex`, add this TOML:
 
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--db", "/absolute/path/to/relay.db"]
+args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
+enabled = true
 ```
 
-For a shared coordination server:
+In Codex, use `/mcp` to inspect active MCP servers.
+
+`npx -y @0dust/handoff doctor` reports `WARN` when no supported MCP client config contains the profile-backed Handoff command. That warning means Handoff setup exists, but Codex has not been wired to use it yet.
+
+## Invocation Pattern
+
+```text
+Use Handoff to package the current investigation context for @alice.
+Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
+Show me the Relay Packet and redaction report before sending.
+```
+
+Recipient flow:
+
+```text
+Use Handoff to check my inbox. Show me any Relay Packet before hydration.
+Wait for my approval before calling relay_hydrate.
+```
+
+Approval tokens are generated outside MCP:
+
+```bash
+npx -y @0dust/handoff approval-token <packet-id> --action send
+npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+```
+
+The command uses your active Handoff profile and asks for a local confirmation phrase. Do not put approval secrets in Codex config.
+
+## Remote Or Self-Hosted
+
+For normal local/LAN use, keep the profile-backed command. For automation against a self-hosted server, explicit-auth compatibility mode remains available:
 
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--server-url", "http://127.0.0.1:3737"]
+args = [
+  "-y",
+  "@0dust/handoff",
+  "server",
+  "mcp",
+  "--server-url",
+  "http://10.0.0.10:3737",
+  "--explicit-auth"
+]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
+enabled = true
 ```
+
+In explicit-auth mode, MCP tool schemas include `authToken` and `workspaceId`. Prefer profile mode for day-to-day agent use.
 
 ## From A Local Checkout
 
@@ -31,8 +93,6 @@ pnpm install
 pnpm build
 ```
 
-Add this to your trusted Codex config:
-
 ```toml
 [mcp_servers.handoff]
 command = "node"
@@ -40,78 +100,11 @@ args = [
   "/absolute/path/to/handoff/dist/cli.js",
   "server",
   "mcp",
-  "--db",
-  "/absolute/path/to/relay.db"
+  "--profile",
+  "default"
 ]
 cwd = "/absolute/path/to/handoff"
 startup_timeout_sec = 10
 tool_timeout_sec = 60
-```
-
-For a shared coordination server:
-
-```toml
-[mcp_servers.handoff]
-command = "node"
-args = [
-  "/absolute/path/to/handoff/dist/cli.js",
-  "server",
-  "mcp",
-  "--server-url",
-  "http://127.0.0.1:3737"
-]
-startup_timeout_sec = 10
-tool_timeout_sec = 60
-```
-
-## Invocation Pattern
-
-Codex does not need a custom slash command to use Relay. Ask Codex to call MCP tools:
-
-```text
-Use Handoff to create a context handoff packet for @alice from this session.
-Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Do not send it until I approve the Relay packet.
-```
-
-Then approve:
-
-```text
-Send the drafted Relay packet after showing me the redaction report.
-```
-
-Generate the required approval token outside MCP, then paste it into the Codex instruction:
-
-```bash
-node dist/cli.js approval-token <packet-id> --server-url http://127.0.0.1:3737 --token <your-token> --approval-secret <your-approval-secret> --action send
-```
-
-The command uses the local approval renderer, asks you to type an exact confirmation phrase, and requires the separate approval secret returned during workspace/member setup. Codex should never call an MCP tool to mint approval tokens, and approval secrets should not be placed in MCP config.
-
-Recipient flow:
-
-```text
-Check my Handoff inbox, show me any packets, and wait for my approval before hydration.
-```
-
-Reply flow:
-
-```text
-Draft a Relay reply to <packet-id>. Show me the answer and evidence before approving the reply.
-```
-
-Clarification flow:
-
-```text
-Request clarification on <packet-id>: ask for the failing assertion and token payload evidence.
-```
-
-CLI fallback is always available:
-
-```bash
-node dist/cli.js inbox --db .relay/team.db --token <token> --workspace <workspace-id>
-node dist/cli.js history --db .relay/team.db --token <token> --workspace <workspace-id> --filter open
-node dist/cli.js audit --db .relay/team.db --token <token> --workspace <workspace-id> --packet <packet-id>
-node dist/cli.js approval-token <packet-id> --db .relay/team.db --token <token> --approval-secret <approval-secret> --action hydrate
-node dist/cli.js hydrate <packet-id> --db .relay/team.db --token <token> --client codex --approval-token <approval-token>
+enabled = true
 ```

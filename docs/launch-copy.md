@@ -2,15 +2,22 @@
 
 ## Short X Post
 
-Shipping Handoff: human-approved context handoffs between coding agents.
+Public beta: Handoff, human-approved context handoffs between coding agents.
 
 Package selected agent-session context, review before send, review before hydration, keep claims separate from evidence, and get audit receipts for every step.
 
 Not shared memory. Not agent Slack. Just safer teammate handoffs.
 
+## Preflight Before Posting
+
+- Push the release branch to the public GitHub repo.
+- Publish `@0dust/handoff` to npm.
+- Verify `npx -y @0dust/handoff doctor --json` runs from a clean temp directory.
+- Record the short demo from `docs/demo-video-script.md` after the npm package is live.
+
 ## GitHub Release Announcement
 
-Handoff is a local-first coordination layer for human-approved context handoffs between coding agents.
+Handoff is a local-first public beta for human-approved context handoffs between coding agents.
 
 The first release focuses on one workflow: a developer can package selected session context into a reviewable packet so another teammate's coding agent can continue without reconstructing the investigation.
 
@@ -27,6 +34,7 @@ What is included:
 - SQLite coordination storage.
 - Fastify coordination API.
 - MCP server for Claude Code, Codex, and generic MCP clients.
+- Profile-backed setup with `start`, `invite`, `join`, and `doctor`.
 - CLI fallback for setup, member/project-alias flows, ask/share/update-draft/reply/clarify/inbox/status/hydrate/decline/archive/history/audit/watch/demo.
 - Audit and hydration receipts.
 - Local polling watcher with terminal output, best-effort desktop notifications, and generic webhook posts.
@@ -42,9 +50,10 @@ What this is not:
 Try it:
 
 ```bash
-pnpm install
-pnpm build
-node dist/cli.js demo two-user --db .relay/demo.db
+npx -y @0dust/handoff start
+npx -y @0dust/handoff invite alice
+npx -y @0dust/handoff join <invite-link>
+npx -y @0dust/handoff doctor
 ```
 
 ## Comparison

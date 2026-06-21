@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { RelayApiClient } from '../api/client.js';
 import { packetStatuses } from '../protocol/schema.js';
 import { RelayService } from '../service/relay-service.js';
+import { createBackendForProfile } from '../setup/orchestrator.js';
+import { createProfileStore, resolveProfileName, type ProfileStore } from '../setup/profile.js';
 import { createRelayDatabase } from '../storage/database.js';
 
 export interface McpToolDefinition {
@@ -76,6 +78,18 @@ const claimInput = z
 
 type RelayBackend = RelayService | RelayApiClient;
 
+export interface McpAuthContext {
+  authToken: string;
+  workspaceId: string;
+}
+
+export interface McpDefinitionOptions {
+  authContext?: McpAuthContext;
+  explicitAuth?: boolean;
+  profileName?: string;
+  profileStore?: ProfileStore;
+}
+
 function asToolResult(value: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
@@ -83,8 +97,11 @@ function asToolResult(value: unknown) {
   };
 }
 
-export function getMcpToolDefinitions(service: RelayBackend): McpToolDefinition[] {
-  return [
+export function getMcpToolDefinitions(
+  service: RelayBackend,
+  options: McpDefinitionOptions = {},
+): McpToolDefinition[] {
+  const tools: McpToolDefinition[] = [
     {
       name: 'relay_ask',
       description:
@@ -321,11 +338,28 @@ export function getMcpToolDefinitions(service: RelayBackend): McpToolDefinition[
       handler: async (args) => service.listAuditReceipts(args),
     },
   ];
+  const authContext = options.authContext ?? authContextFromProfile(options);
+  if (options.explicitAuth || !authContext) {
+    return tools;
+  }
+  return tools.map((tool) => ({
+    ...tool,
+    inputSchema: omitInjectedAuth(tool.inputSchema),
+    handler: async (args) =>
+      tool.handler({
+        ...args,
+        authToken: authContext.authToken,
+        workspaceId: authContext.workspaceId,
+      }),
+  }));
 }
 
-export function createMcpServer(service: RelayBackend): McpServer {
+export function createMcpServer(
+  service: RelayBackend,
+  options: McpDefinitionOptions = {},
+): McpServer {
   const server = new McpServer({ name: 'handoff', version: '0.1.0' });
-  for (const tool of getMcpToolDefinitions(service)) {
+  for (const tool of getMcpToolDefinitions(service, options)) {
     server.registerTool(
       tool.name,
       {
@@ -338,12 +372,81 @@ export function createMcpServer(service: RelayBackend): McpServer {
   return server;
 }
 
-export async function startMcpServer(input: { dbPath: string; serverUrl?: string }): Promise<void> {
-  const service = input.serverUrl
-    ? new RelayApiClient({ serverUrl: input.serverUrl })
-    : new RelayService(createRelayDatabase(input.dbPath));
-  const server = createMcpServer(service);
+export async function startMcpServer(input: {
+  dbPath: string;
+  explicitAuth?: boolean;
+  profileName?: string;
+  serverUrl?: string;
+}): Promise<void> {
+  const profileStore = input.profileName ? createProfileStore() : undefined;
+  const storedProfile = profileStore?.loadProfile(resolveProfileName(input.profileName));
+  if (input.profileName && !storedProfile) {
+    throw new Error(
+      `No Handoff profile named "${resolveProfileName(input.profileName)}". Run \`npx -y @0dust/handoff doctor\`.`,
+    );
+  }
+  const storedCredentials = storedProfile
+    ? profileStore?.loadCredentials(storedProfile.profileName)
+    : undefined;
+  const profile = storedProfile
+    ? {
+        ...storedProfile,
+        workspaceId: process.env.HANDOFF_WORKSPACE_ID ?? storedProfile.workspaceId,
+        serverUrl:
+          input.serverUrl ??
+          process.env.HANDOFF_SERVER_URL ??
+          process.env.AGENT_RELAY_SERVER_URL ??
+          storedProfile.serverUrl,
+        localDatabasePath:
+          process.env.HANDOFF_DB ?? process.env.AGENT_RELAY_DB ?? storedProfile.localDatabasePath,
+      }
+    : undefined;
+  const credentials = storedCredentials
+    ? {
+        ...storedCredentials,
+        memberToken:
+          process.env.HANDOFF_MEMBER_TOKEN ??
+          process.env.AGENT_RELAY_TOKEN ??
+          storedCredentials.memberToken,
+      }
+    : undefined;
+  const service =
+    profile && credentials
+      ? createBackendForProfile({ profile, credentials })
+      : input.serverUrl
+        ? new RelayApiClient({ serverUrl: input.serverUrl })
+        : new RelayService(createRelayDatabase(input.dbPath));
+  const server = createMcpServer(service, {
+    explicitAuth: input.explicitAuth || !profile,
+    profileName: input.profileName,
+    profileStore,
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('Handoff MCP server running on stdio');
+}
+
+function omitInjectedAuth(inputSchema: Record<string, z.ZodTypeAny>): Record<string, z.ZodTypeAny> {
+  const { authToken: _authToken, workspaceId: _workspaceId, ...rest } = inputSchema;
+  return rest;
+}
+
+function authContextFromProfile(options: McpDefinitionOptions): McpAuthContext | undefined {
+  const store = options.profileStore;
+  if (!store) return undefined;
+  const profileName = resolveProfileName(options.profileName);
+  const profile = store.loadProfile(profileName);
+  if (!profile) {
+    throw new Error(
+      `No Handoff profile named "${profileName}". Run \`npx -y @0dust/handoff doctor\`.`,
+    );
+  }
+  const credentials = store.loadCredentials(profile.profileName);
+  const workspaceId = process.env.HANDOFF_WORKSPACE_ID ?? profile.workspaceId;
+  const authToken =
+    process.env.HANDOFF_MEMBER_TOKEN ?? process.env.AGENT_RELAY_TOKEN ?? credentials.memberToken;
+  return {
+    authToken,
+    workspaceId,
+  };
 }

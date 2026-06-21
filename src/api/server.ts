@@ -32,6 +32,14 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     ticketOrPr: z.string().optional(),
   };
 
+  app.get('/health', async () => ({
+    name: 'handoff',
+    ok: true,
+    pid: process.pid,
+    server_id: process.env.HANDOFF_SERVER_ID,
+    version: '0.1.0',
+  }));
+
   app.setErrorHandler((error, _request, reply) => {
     if (isRelayError(error)) {
       reply.status(error.statusCode).send({
@@ -96,6 +104,39 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     const params = z.object({ inviteToken: z.string() }).parse(request.params);
     const body = z.object({ displayName: z.string() }).parse(request.body);
     return service.acceptInvite({ inviteToken: params.inviteToken, displayName: body.displayName });
+  });
+
+  app.get('/invite/:inviteToken', async (request, reply) => {
+    const params = z.object({ inviteToken: z.string() }).parse(request.params);
+    const invite = service.getInvite({ inviteToken: params.inviteToken });
+    const host = request.headers.host ?? '127.0.0.1:3737';
+    const protocol =
+      typeof request.headers['x-forwarded-proto'] === 'string'
+        ? request.headers['x-forwarded-proto']
+        : 'http';
+    const link = `${protocol}://${host}/invite/${encodeURIComponent(params.inviteToken)}`;
+    const joinCommand = `npx -y @0dust/handoff join ${link}`;
+    let status = `Invite for @${invite.invite.handle} to join ${invite.workspace.name}.`;
+    if (invite.invite.accepted_at) {
+      status = `Invite for @${invite.invite.handle} has already been accepted.`;
+    } else if (Date.parse(invite.invite.expires_at) < Date.now()) {
+      status = `Invite for @${invite.invite.handle} has expired.`;
+    }
+    reply
+      .type('text/plain')
+      .send(
+        [
+          'Handoff invite',
+          '',
+          status,
+          `Expires: ${invite.invite.expires_at}`,
+          '',
+          'Join with:',
+          joinCommand,
+          '',
+          'Opening this page does not accept the invite.',
+        ].join('\n'),
+      );
   });
 
   app.get('/members', async (request) => {
