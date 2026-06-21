@@ -293,7 +293,7 @@ describe('coordination API', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('npx -y @0dust/handoff join');
+    expect(response.body).toContain('npx -y handoff-relay join');
     expect(response.body).toContain(`/invite/${invite.invite.token}`);
     expect(accepted.member.handle).toBe('alice');
   });
@@ -969,7 +969,7 @@ describe('CLI and watcher', () => {
     const scriptPath = join(process.cwd(), 'docs', 'demo-video-script.md');
     expect(existsSync(scriptPath)).toBe(true);
     const script = readFileSync(scriptPath, 'utf8');
-    expect(script).toContain('npx -y @0dust/handoff demo two-user');
+    expect(script).toContain('npx -y handoff-relay demo two-user');
     expect(script.toLowerCase()).toContain('record');
   });
 });

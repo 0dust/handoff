@@ -52,7 +52,7 @@ export async function runDoctorChecks(
       : fail(
           'home',
           `Handoff home is missing at ${store.home}.`,
-          'Run `npx -y @0dust/handoff start`.',
+          'Run `npx -y handoff-relay start`.',
         ),
   );
 
@@ -64,7 +64,7 @@ export async function runDoctorChecks(
       fail(
         'profile_parse',
         error instanceof Error ? error.message : 'Profile metadata is not parseable.',
-        'Move the broken profile aside and run `npx -y @0dust/handoff start`.',
+        'Move the broken profile aside and run `npx -y handoff-relay start`.',
       ),
     );
   }
@@ -74,7 +74,7 @@ export async function runDoctorChecks(
       fail(
         'active_profile',
         `No active Handoff profile named "${profileName}".`,
-        'Run `npx -y @0dust/handoff start`.',
+        'Run `npx -y handoff-relay start`.',
       ),
     );
     return buildReport(store.home, checks);
@@ -98,7 +98,7 @@ export async function runDoctorChecks(
     checks.push(
       credentials.memberToken
         ? ok('member_token', 'Member token is present.')
-        : fail('member_token', 'Member token is missing.', 'Run `npx -y @0dust/handoff start`.'),
+        : fail('member_token', 'Member token is missing.', 'Run `npx -y handoff-relay start`.'),
     );
     checks.push(
       credentials.approvalSecret
@@ -106,7 +106,7 @@ export async function runDoctorChecks(
         : fail(
             'approval_secret',
             'Approval secret is missing.',
-            'Run `npx -y @0dust/handoff start`.',
+            'Run `npx -y handoff-relay start`.',
           ),
     );
   } catch (error) {
@@ -114,7 +114,7 @@ export async function runDoctorChecks(
       fail(
         'credentials_store',
         error instanceof Error ? error.message : 'Credential store is missing.',
-        'Run `npx -y @0dust/handoff start`.',
+        'Run `npx -y handoff-relay start`.',
       ),
     );
   }
@@ -146,7 +146,7 @@ export async function runDoctorChecks(
         : fail(
             'local_database',
             `Local database is missing at ${profile.localDatabasePath}.`,
-            'Run `npx -y @0dust/handoff start` to recreate local setup.',
+            'Run `npx -y handoff-relay start` to recreate local setup.',
           ),
     );
   }
@@ -162,7 +162,7 @@ export async function runDoctorChecks(
       fail(
         'server_reachable',
         `Server is not reachable at ${profile.serverUrl}.`,
-        'Run `npx -y @0dust/handoff start` or check the server URL.',
+        'Run `npx -y handoff-relay start` or check the server URL.',
       ),
     );
   }
@@ -184,7 +184,7 @@ export async function runDoctorChecks(
         fail(
           'workspace_access',
           error instanceof Error ? error.message : 'Current member cannot access the workspace.',
-          'Run `npx -y @0dust/handoff join <invite-link>` or recreate the profile.',
+          'Run `npx -y handoff-relay join <invite-link>` or recreate the profile.',
         ),
       );
     } finally {

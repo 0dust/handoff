@@ -349,7 +349,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     const invite = await createInviteForProfile({ home, handle: 'alice' });
     const credentials = store.loadCredentials('default');
 
-    expect(invite.joinCommand).toMatch(/^npx -y @0dust\/handoff join http:\/\/127\.0\.0\.1:/);
+    expect(invite.joinCommand).toMatch(/^npx -y handoff-relay join http:\/\/127\.0\.0\.1:/);
     expect(parseInviteLink(invite.inviteLink).inviteToken).toMatch(/^relay_invite_/);
     expect(invite.expiresAt).toBeTruthy();
     expect(JSON.stringify(invite)).not.toContain(credentials.memberToken);
@@ -388,9 +388,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(joined.profile.workspaceId).toBe(started.profile.workspaceId);
     expect(joined.mcp.status).toBe('installed');
     expect(profile?.serverUrl).toBe(serverUrl);
-    expect(readFileSync(join(aliceHome, '.cursor', 'mcp.json'), 'utf8')).toContain(
-      '@0dust/handoff',
-    );
+    expect(readFileSync(join(aliceHome, '.cursor', 'mcp.json'), 'utf8')).toContain('handoff-relay');
     expect(inbox).toEqual([]);
   });
 
@@ -414,9 +412,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       const result = await runCli(['join', invite.inviteLink]);
 
       expect(result.code).toBe(0);
-      expect(result.stdout).toContain(
-        'Command: npx -y @0dust/handoff server mcp --profile default',
-      );
+      expect(result.stdout).toContain('Command: npx -y handoff-relay server mcp --profile default');
       expect(result.stdout).not.toContain('start --install-mcp');
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -434,7 +430,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect.objectContaining({
         id: 'active_profile',
         status: 'FAIL',
-        fix: expect.stringContaining('handoff start'),
+        fix: expect.stringContaining('handoff-relay start'),
       }),
     );
 
@@ -474,7 +470,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       [
         '[mcp_servers.handoff]',
         'command = "npx"',
-        'args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]',
+        'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]',
       ].join('\n'),
     );
 
@@ -492,6 +488,40 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       }),
     );
   });
+
+  test.each(['@0dust/handoff', 'handoff'])(
+    'doctor does not accept old npm package command %s as installed MCP config',
+    async (packageName) => {
+      const home = tempHome();
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      mkdirSync(join(home, '.codex'), { recursive: true });
+      writeFileSync(
+        join(home, '.codex', 'config.toml'),
+        [
+          '[mcp_servers.handoff]',
+          'command = "npx"',
+          `args = ["-y", "${packageName}", "server", "mcp", "--profile", "default"]`,
+        ].join('\n'),
+      );
+
+      const report = await runDoctorChecks({
+        env: { HOME: home, HANDOFF_HOME: home },
+        home,
+        profileName: started.profile.profileName,
+      });
+
+      expect(report.status).toBe('WARN');
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'mcp_config',
+          status: 'WARN',
+        }),
+      );
+    },
+  );
 
   test('LAN detection prefers a private non-loopback IPv4 address', () => {
     const interfaces = {
@@ -895,7 +925,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
 
       expect(result.code).toBe(0);
       expect(parsed.mcp.status).toBe('installed');
-      expect(config).toContain('@0dust/handoff');
+      expect(config).toContain('handoff-relay');
       expect(config).toContain('--profile');
       expect(config).toContain('default');
     } finally {
@@ -919,7 +949,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         '',
         '[mcp_servers.handoff]',
         'command = "npx"',
-        'args = ["-y", "@0dust/handoff", "server", "mcp", "--explicit-auth"]',
+        'args = ["-y", "handoff-relay", "server", "mcp", "--explicit-auth"]',
         'startup_timeout_sec = 10',
         '',
         '[mcp_servers.other]',
@@ -937,7 +967,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(status.installed).toBe(true);
     expect(config.match(/^\[mcp_servers\.handoff\]$/gm)).toHaveLength(1);
     expect(config).toContain(
-      'args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]',
+      'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]',
     );
     expect(config).not.toContain('--explicit-auth');
     expect(config).toContain('[mcp_servers.other]');
@@ -953,7 +983,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
           mcpServers: {
             legacy: {
               command: 'npx',
-              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--explicit-auth'],
+              args: ['-y', 'handoff-relay', 'server', 'mcp', '--explicit-auth'],
             },
           },
         },
@@ -969,11 +999,11 @@ describe('invite, join, LAN, and doctor setup flows', () => {
           mcpServers: {
             handoff: {
               command: 'npx',
-              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--profile', 'default'],
+              args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
             },
             legacy: {
               command: 'npx',
-              args: ['-y', '@0dust/handoff', 'server', 'mcp', '--explicit-auth'],
+              args: ['-y', 'handoff-relay', 'server', 'mcp', '--explicit-auth'],
             },
           },
         },

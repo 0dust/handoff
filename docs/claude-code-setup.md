@@ -7,16 +7,16 @@ Handoff runs as a local stdio MCP server near each user's Claude Code session. T
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y @0dust/handoff start --lan
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff doctor
+npx -y handoff-relay start --lan
+npx -y handoff-relay invite alice
+npx -y handoff-relay doctor
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
-npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
-npx -y @0dust/handoff doctor
+npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y handoff-relay doctor
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the profile-backed MCP command for her Claude Code config.
@@ -35,7 +35,7 @@ Add with the CLI:
 
 ```bash
 claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","@0dust/handoff","server","mcp","--profile","default"]}'
+  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
 ```
 
 Or create `handoff.mcp.json`:
@@ -45,7 +45,7 @@ Or create `handoff.mcp.json`:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
     }
   }
 }
@@ -72,7 +72,7 @@ Draft only. Show me the packet summary, claims, evidence, expiry, and redaction 
 In strict mode, before Claude calls `relay_approve`, generate a human approval token in a terminal:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action send
+npx -y handoff-relay approval-token <packet-id> --action send
 ```
 
 Recipient side:
@@ -85,7 +85,7 @@ If I approve, hydrate it into this Claude Code session.
 Hydration also needs a human approval token:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
 Approval-token minting is deliberately outside MCP so Claude cannot draft and approve a packet with only a member token. Keep approval secrets out of MCP config.
@@ -93,7 +93,7 @@ Approval-token minting is deliberately outside MCP so Claude cannot draft and ap
 For a smoother local workflow, profile-backed MCP can opt into agent-confirmed approvals:
 
 ```bash
-npx -y @0dust/handoff server mcp --profile default --agent-approvals
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 With that flag, Claude may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; remote profiles send the approval secret to that server API. Approval secrets still stay out of Claude config and tool schemas.
@@ -111,7 +111,7 @@ Explicit-auth compatibility mode remains available for automation:
       "command": "npx",
       "args": [
         "-y",
-        "@0dust/handoff",
+        "handoff-relay",
         "server",
         "mcp",
         "--server-url",

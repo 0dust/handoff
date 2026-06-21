@@ -37,7 +37,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     ok: true,
     pid: process.pid,
     server_id: process.env.HANDOFF_SERVER_ID,
-    version: '0.1.0',
+    version: '0.1.1',
   }));
 
   app.setErrorHandler((error, _request, reply) => {
@@ -115,7 +115,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
         ? request.headers['x-forwarded-proto']
         : 'http';
     const link = `${protocol}://${host}/invite/${encodeURIComponent(params.inviteToken)}`;
-    const joinCommand = `npx -y @0dust/handoff join ${link}`;
+    const joinCommand = `npx -y handoff-relay join ${link}`;
     let status = `Invite for @${invite.invite.handle} to join ${invite.workspace.name}.`;
     if (invite.invite.accepted_at) {
       status = `Invite for @${invite.invite.handle} has already been accepted.`;

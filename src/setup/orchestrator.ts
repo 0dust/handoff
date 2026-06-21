@@ -187,7 +187,7 @@ export async function startHandoffSetup(
       publicInviteBaseUrl,
       warning:
         input.lan && !lanReachable
-          ? 'Current Handoff server is not LAN-reachable. Run `npx -y @0dust/handoff start --lan --port <free-port>` or stop the loopback server and retry.'
+          ? 'Current Handoff server is not LAN-reachable. Run `npx -y handoff-relay start --lan --port <free-port>` or stop the loopback server and retry.'
           : input.lan && !publicInviteBaseUrl
             ? 'No private LAN address was detected. Pass --public-url to set an invite URL.'
             : server.warning,
@@ -197,7 +197,7 @@ export async function startHandoffSetup(
       profileName: profile.profileName,
       skipped: input.noMcpInstall,
     }),
-    nextCommand: `npx -y @0dust/handoff invite alice`,
+    nextCommand: `npx -y handoff-relay invite alice`,
   };
 }
 
@@ -227,9 +227,9 @@ export async function createInviteForProfile(input: {
       handle: invited.invite.handle,
       expiresAt: invited.invite.expires_at,
       inviteLink,
-      joinCommand: `npx -y @0dust/handoff join ${inviteLink}`,
+      joinCommand: `npx -y handoff-relay join ${inviteLink}`,
       warning: inviteLink.includes('127.0.0.1')
-        ? 'This invite link is loopback-only. Run `npx -y @0dust/handoff start --lan` for another machine.'
+        ? 'This invite link is loopback-only. Run `npx -y handoff-relay start --lan` for another machine.'
         : undefined,
     };
   } finally {
@@ -304,7 +304,7 @@ function requireProfile(store: ProfileStore, profileName: string): HandoffProfil
   const profile = store.loadProfile(profileName);
   if (!profile) {
     throw new Error(
-      `No Handoff profile named "${profileName}". Run \`npx -y @0dust/handoff start\`.`,
+      `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay start\`.`,
     );
   }
   return profile;

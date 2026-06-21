@@ -7,16 +7,16 @@ Handoff runs as a local stdio MCP server beside each user's Codex session. The s
 On Sam's machine, host a LAN-reachable workspace and install the Codex MCP entry:
 
 ```bash
-npx -y @0dust/handoff start --lan --install-mcp codex
-npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff doctor
+npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay invite alice
+npx -y handoff-relay doctor
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
-npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp codex
-npx -y @0dust/handoff doctor
+npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp codex
+npx -y handoff-relay doctor
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and wires Codex when `--install-mcp codex` is present.
@@ -28,8 +28,8 @@ If Alice is not on the same network, host Handoff behind a reachable URL and use
 For a same-machine demo or CI smoke test, use loopback-only setup:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp codex
-npx -y @0dust/handoff invite alice
+npx -y handoff-relay start --install-mcp codex
+npx -y handoff-relay invite alice
 ```
 
 ## Add Handoff To Codex
@@ -41,7 +41,7 @@ If you did not use `--install-mcp codex`, add this TOML:
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default"]
+args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -49,7 +49,7 @@ enabled = true
 
 In Codex, use `/mcp` to inspect active MCP servers.
 
-`npx -y @0dust/handoff doctor` reports `WARN` when no supported MCP client config contains the profile-backed Handoff command. That warning means Handoff setup exists, but Codex has not been wired to use it yet.
+`npx -y handoff-relay doctor` reports `WARN` when no supported MCP client config contains the profile-backed Handoff command. That warning means Handoff setup exists, but Codex has not been wired to use it yet.
 
 ## Invocation Pattern
 
@@ -69,8 +69,8 @@ Wait for my approval before calling relay_hydrate.
 Strict approval tokens are generated outside MCP:
 
 ```bash
-npx -y @0dust/handoff approval-token <packet-id> --action send
-npx -y @0dust/handoff approval-token <packet-id> --action hydrate
+npx -y handoff-relay approval-token <packet-id> --action send
+npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
 The command uses your active Handoff profile and asks for a local confirmation phrase. Do not put approval secrets in Codex config.
@@ -80,7 +80,7 @@ For a smoother local workflow, profile-backed MCP can opt into agent-confirmed a
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "@0dust/handoff", "server", "mcp", "--profile", "default", "--agent-approvals"]
+args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -97,7 +97,7 @@ For normal local/LAN use, keep the profile-backed command. For automation agains
 command = "npx"
 args = [
   "-y",
-  "@0dust/handoff",
+  "handoff-relay",
   "server",
   "mcp",
   "--server-url",
