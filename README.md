@@ -46,23 +46,29 @@ Sam's Codex session
 
 No global install is required.
 
-```bash
-# On your machine: create the workspace and local server
-npx -y @0dust/handoff start
+### Team Handoff
 
-# On your machine: invite a teammate
+Use this path when Sam and Alice are on different machines on the same network.
+
+```bash
+# On Sam's machine: create a workspace and host it on the LAN
+npx -y @0dust/handoff start --lan
+
+# On Sam's machine: invite Alice
 npx -y @0dust/handoff invite alice
 
 # On Alice's machine: accept the invite and create her local profile
-npx -y @0dust/handoff join <invite-link>
+npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
 
 # On each machine: check setup health
 npx -y @0dust/handoff doctor
 ```
 
-`start` creates a local Handoff profile, a local SQLite database, a workspace, an admin member, a secure credential file, and a profile-backed MCP command. It does not print member tokens, approval secrets, database paths, workspace IDs, or MCP auth arguments in the normal path.
+`start --lan` creates Sam's local Handoff profile, local SQLite database, workspace, admin member, secure credential file, and reachable coordination server. `invite alice` prints the exact `join` command Alice should run.
 
-Alice does not run `start` for your workspace. She needs Node 20+ with `npx`, the invite link/command you send her, and network access to the Handoff server URL inside that invite. `join` is her setup step: it accepts the invite, creates her local profile, stores her member credentials, and prints the MCP command for her agent client.
+Alice does not run `start` for Sam's workspace. She needs Node 20+ with `npx`, the invite link/command Sam sends her, and network access to the Handoff server URL inside that invite. `join` is Alice's setup step: it accepts the invite, creates her local profile, stores her member credentials, and prints the MCP command for her agent client.
+
+If Alice is not on the same LAN, host Handoff somewhere she can reach and pass that URL with `--public-url`, or use the dedicated server path in [Local self-hosting](docs/local-self-hosting.md).
 
 `doctor` may report `WARN` for `mcp_config` until you add Handoff to Codex, Claude Code, Cursor, or another MCP client. That warning means the local setup is healthy, but agent access has not been wired yet.
 
@@ -70,16 +76,18 @@ If you want Handoff to write an MCP config for a supported client, pass an expli
 
 ```bash
 # choose the client you use
-npx -y @0dust/handoff start --install-mcp codex
-npx -y @0dust/handoff start --install-mcp cursor
+npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y @0dust/handoff start --lan --install-mcp cursor
 npx -y @0dust/handoff join <invite-link> --install-mcp codex
 npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
-Plain `start` creates loopback-only invites for the same machine. Use LAN mode before inviting when Alice joins from another machine on the same network:
+### Local Demo Mode
+
+Plain `start` is for local demos, CI smoke tests, or two profiles on the same machine. Its invite links are loopback-only and are not meant for Alice's laptop.
 
 ```bash
-npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff start
 npx -y @0dust/handoff invite alice
 ```
 
@@ -134,7 +142,11 @@ Codex stores MCP configuration in `~/.codex/config.toml` or trusted project-scop
 Automatic install for the default global Codex config:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp codex
+# Sam hosts and installs Codex MCP
+npx -y @0dust/handoff start --lan --install-mcp codex
+
+# Alice joins and installs Codex MCP
+npx -y @0dust/handoff join <invite-link> --install-mcp codex
 ```
 
 ```toml
@@ -172,7 +184,11 @@ Cursor supports MCP server entries from Settings > Tools & MCP, and can also use
 Automatic install for `~/.cursor/mcp.json`:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp cursor
+# Sam hosts and installs Cursor MCP
+npx -y @0dust/handoff start --lan --install-mcp cursor
+
+# Alice joins and installs Cursor MCP
+npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
 ```json
@@ -204,7 +220,7 @@ Any MCP client that can launch a stdio subprocess can use the same command:
 Advanced explicit-auth MCP mode remains available:
 
 ```bash
-npx -y @0dust/handoff server mcp --server-url http://127.0.0.1:3737 --explicit-auth
+npx -y @0dust/handoff server mcp --server-url http://10.0.0.10:3737 --explicit-auth
 ```
 
 More detail: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
@@ -223,22 +239,23 @@ npx -y @0dust/handoff approval-token <reply-packet-id> --action reply
 
 The command asks for an exact local confirmation phrase and returns a short-lived approval token. Paste that token back into the agent instruction when you want it to call `relay_approve` or `relay_hydrate`.
 
-## Local, LAN, And Remote
+## Team, Local Demo, And Remote
 
-Local-only setup:
-
-```bash
-npx -y @0dust/handoff start
-```
-
-LAN setup for teammates on the same Wi-Fi:
+Team setup on the same network:
 
 ```bash
 npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
 ```
 
-Running plain `start` later returns the profile to local-only invite links. Use `--lan` or pass a fresh `--public-url` again when you want new invites to leave the machine.
+Local demo setup:
+
+```bash
+npx -y @0dust/handoff start
+npx -y @0dust/handoff invite alice
+```
+
+Running plain `start` later returns the profile to local-only invite links. Use `--lan` or pass a fresh `--public-url` again when you want new invites to leave Sam's machine.
 
 Remote or self-hosted setup still uses the existing low-level server and explicit flags. Keep that path for automation, custom hosting, and migration work:
 

@@ -1,22 +1,34 @@
 # Codex Setup
 
-Handoff runs as a local stdio MCP server. Run setup first:
+Handoff runs as a local stdio MCP server beside each user's Codex session. The shared workspace lives on the host machine or server; every teammate joins it into their own local profile.
+
+## Team Setup
+
+On Sam's machine, host a LAN-reachable workspace and install the Codex MCP entry:
 
 ```bash
-npx -y @0dust/handoff start
+npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y @0dust/handoff invite alice
 npx -y @0dust/handoff doctor
 ```
 
-To let Handoff write a global Codex MCP entry, run:
+On Alice's machine, run the invite command Sam sends her:
+
+```bash
+npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp codex
+npx -y @0dust/handoff doctor
+```
+
+Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and wires Codex when `--install-mcp codex` is present.
+
+If Alice is not on the same network, host Handoff behind a reachable URL and use `start --public-url <url>` or the dedicated server path in [Local self-hosting](local-self-hosting.md).
+
+## Local Demo Setup
+
+For a same-machine demo or CI smoke test, use loopback-only setup:
 
 ```bash
 npx -y @0dust/handoff start --install-mcp codex
-```
-
-For a teammate on the same Wi-Fi:
-
-```bash
-npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
 ```
 

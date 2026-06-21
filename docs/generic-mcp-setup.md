@@ -2,21 +2,37 @@
 
 Handoff is a stdio MCP server. Any MCP client that can launch a command with arguments can use it.
 
-Run setup first:
+## Team Setup
+
+On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y @0dust/handoff start
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
 npx -y @0dust/handoff doctor
 ```
+
+On Alice's machine, run the invite command Sam sends her:
+
+```bash
+npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y @0dust/handoff doctor
+```
+
+Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the same profile-backed MCP command for her MCP client.
 
 Handoff can write MCP config for Codex and Cursor when you ask explicitly:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp codex
-npx -y @0dust/handoff start --install-mcp cursor
+npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y @0dust/handoff start --lan --install-mcp cursor
+npx -y @0dust/handoff join <invite-link> --install-mcp codex
+npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
 For Claude Code and other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
+
+For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
 
 ## Profile-Backed Config
 
@@ -40,7 +56,8 @@ In this mode, Handoff injects the member token and workspace ID from the local p
 In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp cursor
+npx -y @0dust/handoff start --lan --install-mcp cursor
+npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
 ```json
@@ -63,7 +80,7 @@ Show me the Relay Packet before sending.
 
 ## LAN And Remote Profiles
 
-For LAN setup:
+For a same-network team setup:
 
 ```bash
 npx -y @0dust/handoff start --lan
@@ -91,7 +108,7 @@ For advanced scripts and tests that intentionally pass auth through tool inputs:
         "server",
         "mcp",
         "--server-url",
-        "http://127.0.0.1:3737",
+        "http://10.0.0.10:3737",
         "--explicit-auth"
       ]
     }

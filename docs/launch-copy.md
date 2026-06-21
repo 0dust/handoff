@@ -50,9 +50,12 @@ What this is not:
 Try it:
 
 ```bash
-npx -y @0dust/handoff start
+# Sam hosts a reachable workspace
+npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
-npx -y @0dust/handoff join <invite-link>
+
+# Alice joins from her machine
+npx -y @0dust/handoff join http://<host>:3737/invite/<invite-token>
 npx -y @0dust/handoff doctor
 ```
 

@@ -11,17 +11,28 @@ npx -y @0dust/handoff doctor --json
 
 Doctor checks the Handoff home directory, active profile, credential file permissions, member token, approval secret, server reachability, workspace access, and the profile-backed MCP command.
 
-If the profile is missing, run:
+If the profile is missing and you are hosting a workspace for teammates, run:
 
 ```bash
-npx -y @0dust/handoff start
+npx -y @0dust/handoff start --lan
+npx -y @0dust/handoff invite alice
 ```
 
-If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config:
+If you are joining someone else's workspace, ask them for the invite command and run:
 
 ```bash
-npx -y @0dust/handoff start --install-mcp codex
-npx -y @0dust/handoff start --install-mcp cursor
+npx -y @0dust/handoff join <invite-link>
+```
+
+Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
+
+If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config while hosting or joining:
+
+```bash
+npx -y @0dust/handoff start --lan --install-mcp codex
+npx -y @0dust/handoff start --lan --install-mcp cursor
+npx -y @0dust/handoff join <invite-link> --install-mcp codex
+npx -y @0dust/handoff join <invite-link> --install-mcp cursor
 ```
 
 For Claude Code or another MCP client, add the printed profile-backed command:

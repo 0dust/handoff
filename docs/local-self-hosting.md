@@ -1,20 +1,21 @@
 # Local Self-Hosting
 
-Handoff is local-first. The simple path creates a local profile and server:
-
-```bash
-npx -y @0dust/handoff start
-npx -y @0dust/handoff doctor
-```
-
-For teammates on the same Wi-Fi:
+Handoff is local-first, but team handoff needs a server Alice's machine can reach. For teammates on the same Wi-Fi, Sam can host directly from his machine:
 
 ```bash
 npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
+npx -y @0dust/handoff doctor
 ```
 
-Plain `start` resets the active profile to local-only invite links. Re-run `start --lan` or pass `--public-url` before creating new invites that another machine should join.
+Alice runs the printed join command on her own machine:
+
+```bash
+npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y @0dust/handoff doctor
+```
+
+Plain `start` is for local demos, CI smoke tests, or two profiles on one machine. It resets the active profile to loopback-only invite links. Re-run `start --lan` or pass `--public-url` before creating new invites that another machine should join.
 
 For a dedicated trusted host, run one coordination server and have teammates join an invite from that server.
 

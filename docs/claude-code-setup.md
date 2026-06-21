@@ -1,20 +1,31 @@
 # Claude Code Setup
 
-Handoff runs as a local stdio MCP server near Claude Code. Run setup first:
+Handoff runs as a local stdio MCP server near each user's Claude Code session. The shared workspace lives on the host machine or server; every teammate joins it into their own local profile.
 
-```bash
-npx -y @0dust/handoff start
-npx -y @0dust/handoff doctor
-```
+## Team Setup
 
-Handoff cannot safely edit every Claude Code config shape automatically, so setup prints the profile-backed command and the `claude mcp add-json` command below. `doctor` reports `WARN` until a supported MCP config contains that profile-backed command.
-
-For LAN setup:
+On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
 npx -y @0dust/handoff start --lan
 npx -y @0dust/handoff invite alice
+npx -y @0dust/handoff doctor
 ```
+
+On Alice's machine, run the invite command Sam sends her:
+
+```bash
+npx -y @0dust/handoff join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y @0dust/handoff doctor
+```
+
+Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the profile-backed MCP command for her Claude Code config.
+
+If Alice is not on the same network, host Handoff behind a reachable URL and use `start --public-url <url>` or the dedicated server path in [Local self-hosting](local-self-hosting.md).
+
+Handoff cannot safely edit every Claude Code config shape automatically, so setup prints the profile-backed command and the `claude mcp add-json` command below. `doctor` reports `WARN` until a supported MCP config contains that profile-backed command.
+
+For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
 
 ## Add Handoff To Claude Code
 
