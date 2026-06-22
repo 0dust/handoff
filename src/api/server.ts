@@ -37,7 +37,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     ok: true,
     pid: process.pid,
     server_id: process.env.HANDOFF_SERVER_ID,
-    version: '0.1.1',
+    version: '0.1.3',
   }));
 
   app.setErrorHandler((error, _request, reply) => {

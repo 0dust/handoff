@@ -190,7 +190,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   program
     .name('handoff')
     .description('Human-approved handoffs between coding agents.')
-    .version('0.1.1');
+    .version('0.1.3');
 
   registerSetupCommands(program, { io });
 

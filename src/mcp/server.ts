@@ -402,7 +402,7 @@ export function createMcpServer(
   service: RelayBackend,
   options: McpDefinitionOptions = {},
 ): McpServer {
-  const server = new McpServer({ name: 'handoff', version: '0.1.1' });
+  const server = new McpServer({ name: 'handoff', version: '0.1.3' });
   for (const tool of getMcpToolDefinitions(service, options)) {
     server.registerTool(
       tool.name,
