@@ -119,7 +119,7 @@ For local profile-backed sessions, you can opt into agent-confirmed approvals:
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-With that flag, the MCP process requests the short-lived approval token after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate.
+With that flag, the MCP process requests the short-lived approval token through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
 
 ## Optional CLI Install
 
