@@ -21,7 +21,7 @@ Raw transcripts are not captured or shared by default.
 - Recipient reviews and approves replies before return.
 - Sender views replies and hydrates them explicitly.
 
-The service rejects invalid state transitions, and send/reply/hydrate actions require a short-lived human approval token. Strict mode generates that token outside MCP through the local CLI confirmation prompt. Agent-confirmed mode is an opt-in profile-backed MCP mode where the MCP process can request the same short-lived token through the configured Handoff backend after the agent shows the packet and the user explicitly tells it to send, approve, or hydrate. Local database profiles keep that request local; remote profiles send the approval secret to the configured Handoff server API.
+The service rejects invalid state transitions, and send/reply/hydrate actions require a short-lived human approval token. Strict mode generates that token outside MCP through the local CLI confirmation prompt. Agent-confirmed mode is an opt-in profile-backed MCP mode where the MCP process can request the same short-lived token through the configured Handoff backend after the agent shows the packet and the user explicitly tells it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
 
 Approval-token minting requires both the member token and a separate per-member approval secret returned during setup/acceptance. A member token alone cannot mint approval tokens. Agent-confirmed mode does not cryptographically prove a fresh terminal phrase; it treats explicit instruction in the active local agent session as the approval event.
 

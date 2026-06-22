@@ -48,8 +48,10 @@ export function hashToken(token: string): string {
 
 export function normalizeHandle(handle: string): string {
   const trimmed = handle.trim().replace(/^@/, '').toLowerCase();
-  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(trimmed)) {
-    throw new Error('Handle must start with a letter and contain only letters, numbers, _, or -');
+  if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(trimmed)) {
+    throw new Error(
+      'Handle must start with a letter or number and contain only letters, numbers, _, or -',
+    );
   }
   return trimmed;
 }

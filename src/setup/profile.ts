@@ -144,7 +144,7 @@ export function inferHandle(env: HandoffEnv = process.env): string {
     .replace(/^@/, '')
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^[^a-z]+/, '')
+    .replace(/^[^a-z0-9]+/, '')
     .replace(/-+/g, '-')
     .slice(0, 32);
   return handle.length >= 2 ? handle : 'user';

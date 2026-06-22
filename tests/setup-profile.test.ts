@@ -14,8 +14,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { buildApiServer } from '../src/api/server.js';
+import { RelayApiClient } from '../src/api/client.js';
 import { runCli } from '../src/cli.js';
 import {
+  createBackendForProfile,
   createInviteForProfile,
   joinInvite,
   startHandoffSetup,
@@ -221,6 +223,47 @@ describe('profile and credential storage', () => {
     expect(mode & 0o077).toBe(0);
     expect(JSON.stringify(result)).not.toContain(credentials.memberToken);
     expect(JSON.stringify(result)).not.toContain(credentials.approvalSecret);
+  });
+
+  test('start preserves handles that begin with digits', async () => {
+    const home = tempHome();
+    const result = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: '0dust' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+
+    expect(result.profile.handle).toBe('0dust');
+  });
+
+  test('HTTP-backed profiles use the API server instead of opening the local database directly', () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    const db = createRelayDatabase(dbPath);
+    db.close();
+
+    const backend = createBackendForProfile({
+      credentials: {
+        memberToken: 'relay_member_test',
+        approvalSecret: 'relay_approval_secret_test',
+        createdAt: new Date().toISOString(),
+      },
+      profile: {
+        schemaVersion: 1,
+        profileName: 'default',
+        workspaceId: 'wrk_test',
+        workspaceName: 'Test Workspace',
+        memberId: 'mem_test',
+        handle: '0dust',
+        displayName: '0dust',
+        role: 'admin',
+        serverUrl: 'http://127.0.0.1:3737',
+        localDatabasePath: dbPath,
+        serverMode: 'lan',
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    expect(backend).toBeInstanceOf(RelayApiClient);
   });
 
   test('start is idempotent and reuses the existing workspace and member', async () => {
@@ -584,21 +627,25 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       serverUrl: 'http://127.0.0.1:3737',
     });
 
+    let localServerUrl = '';
     const local = await startHandoffSetup({
       env: { HANDOFF_HOME: home, USER: 'sam' },
       lifecycle: {
-        ensureServer: async () => ({
-          port: 39338,
-          serverUrl: 'http://127.0.0.1:39338',
-          status: 'reused',
-        }),
+        ensureServer: async (input) => {
+          localServerUrl = await startProfileBackedApi(input.dbPath);
+          return {
+            port: Number(new URL(localServerUrl).port),
+            serverUrl: localServerUrl,
+            status: 'reused',
+          };
+        },
       },
     });
     const invite = await createInviteForProfile({ home, handle: 'alice' });
 
     expect(local.profile.serverMode).toBe('local');
     expect(local.profile.publicInviteBaseUrl).toBeUndefined();
-    expect(invite.inviteLink).toContain('http://127.0.0.1:39338');
+    expect(invite.inviteLink).toContain(`${localServerUrl}/invite/`);
     expect(invite.inviteLink).not.toContain('192.168.1.42');
   });
 
@@ -610,11 +657,14 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       env: { HANDOFF_HOME: home, USER: 'sam' },
       publicUrl,
       lifecycle: {
-        ensureServer: async () => ({
-          port: 39339,
-          serverUrl: 'http://127.0.0.1:39339',
-          status: 'started',
-        }),
+        ensureServer: async (input) => {
+          const serverUrl = await startProfileBackedApi(input.dbPath);
+          return {
+            port: Number(new URL(serverUrl).port),
+            serverUrl,
+            status: 'started',
+          };
+        },
       },
     });
     const invite = await createInviteForProfile({ home, handle: 'alice' });
@@ -1115,6 +1165,56 @@ describe('profile-backed approval tokens', () => {
       }
     } finally {
       service.close();
+    }
+  });
+
+  test('approval-token uses the profile server URL when one is configured', async () => {
+    const home = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const credentials = createProfileStore({ home }).loadCredentials('default');
+    const service = new RelayService(createRelayDatabase(started.profile.localDatabasePath!));
+    let serviceClosed = false;
+    try {
+      const draft = service.createShareDraft({
+        authToken: credentials.memberToken,
+        workspaceId: started.profile.workspaceId,
+        to: `@${started.profile.handle}`,
+        finding: 'Profile-backed approval should use the API server.',
+        title: 'Server-backed approval token',
+        summary: 'The CLI should not open the local database when a server URL is configured.',
+        sourceClient: 'codex',
+      });
+      service.close();
+      serviceClosed = true;
+
+      const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+      const store = createProfileStore({ home });
+      store.saveProfile({ ...started.profile, serverMode: 'lan', serverUrl });
+
+      const previous = process.env.HANDOFF_HOME;
+      const previousApproval = process.env.AGENT_RELAY_ASSUME_HUMAN_APPROVAL;
+      process.env.HANDOFF_HOME = home;
+      process.env.AGENT_RELAY_ASSUME_HUMAN_APPROVAL = '1';
+      try {
+        const result = await runCli(['approval-token', draft.id, '--action', 'send', '--json']);
+        const parsed = JSON.parse(result.stdout);
+
+        expect(result.code).toBe(0);
+        expect(parsed.approval_token).toMatch(/^relay_approval_/);
+        expect(result.stdout).not.toContain('relay_approval_secret_');
+      } finally {
+        if (previous === undefined) delete process.env.HANDOFF_HOME;
+        else process.env.HANDOFF_HOME = previous;
+        if (previousApproval === undefined) delete process.env.AGENT_RELAY_ASSUME_HUMAN_APPROVAL;
+        else process.env.AGENT_RELAY_ASSUME_HUMAN_APPROVAL = previousApproval;
+      }
+    } finally {
+      if (!serviceClosed) {
+        service.close();
+      }
     }
   });
 });

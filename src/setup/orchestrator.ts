@@ -78,6 +78,9 @@ export function createBackendForProfile(input: {
   credentials: HandoffCredentials;
   profile: HandoffProfile;
 }): RelayApiClient | RelayService {
+  if (/^https?:\/\//i.test(input.profile.serverUrl)) {
+    return new RelayApiClient({ serverUrl: input.profile.serverUrl });
+  }
   if (
     input.profile.localDatabasePath &&
     input.profile.serverMode !== 'remote' &&
