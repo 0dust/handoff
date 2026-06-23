@@ -1,5 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
+import { relayError } from './errors.js';
+
 export type MemberRole = 'admin' | 'member';
 export type MemberStatus = 'active' | 'revoked';
 
@@ -49,8 +51,10 @@ export function hashToken(token: string): string {
 export function normalizeHandle(handle: string): string {
   const trimmed = handle.trim().replace(/^@/, '').toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(trimmed)) {
-    throw new Error(
+    throw relayError(
+      'INVALID_INPUT',
       'Handle must start with a letter or number and contain only letters, numbers, _, or -',
+      400,
     );
   }
   return trimmed;

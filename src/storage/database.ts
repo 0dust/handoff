@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import { createPacketTableSql } from './packet-table.js';
+
 export type RelayDatabase = Database.Database;
 
 const schema = `
@@ -54,39 +56,7 @@ CREATE TABLE IF NOT EXISTS invites (
   FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
 );
 
-CREATE TABLE IF NOT EXISTS packets (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL,
-  packet_type TEXT NOT NULL,
-  sender_member_id TEXT NOT NULL,
-  recipient_member_ids TEXT NOT NULL,
-  parent_packet_id TEXT,
-  status TEXT NOT NULL,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  question TEXT,
-  finding TEXT,
-  answer TEXT,
-  project TEXT NOT NULL,
-  source_client TEXT NOT NULL,
-  claims TEXT NOT NULL,
-  evidence TEXT NOT NULL,
-  files_or_symbols TEXT NOT NULL,
-  commands_or_tests_run TEXT NOT NULL,
-  what_was_tried TEXT NOT NULL,
-  known_failures TEXT NOT NULL,
-  current_hypothesis TEXT NOT NULL,
-  confidence TEXT NOT NULL,
-  suggested_next_steps TEXT NOT NULL,
-  redaction_report TEXT NOT NULL,
-  hydration_policy TEXT NOT NULL,
-  audit_receipt TEXT NOT NULL,
-  expires_at TEXT,
-  recheck_by TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
-);
+${createPacketTableSql()}
 
 CREATE INDEX IF NOT EXISTS packets_workspace_idx ON packets(workspace_id);
 CREATE INDEX IF NOT EXISTS packets_sender_idx ON packets(sender_member_id);

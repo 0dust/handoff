@@ -336,5 +336,7 @@ function appendPacketQueryFilters(params: URLSearchParams, input: PacketQueryFil
   if (input.recipient) params.set('recipient', input.recipient);
   if (input.status) params.set('status', input.status);
   if (input.fileOrSymbol) params.set('fileOrSymbol', input.fileOrSymbol);
+  if (input.limit !== undefined) params.set('limit', String(input.limit));
+  if (input.offset !== undefined) params.set('offset', String(input.offset));
   if (input.ticketOrPr) params.set('ticketOrPr', input.ticketOrPr);
 }

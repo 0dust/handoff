@@ -22,6 +22,7 @@ import {
 import { isRelayError } from './errors.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
 import type { RelayPacket } from './protocol/schema.js';
+import { runtimeVersion } from './runtime/version.js';
 import { createBackendForProfile } from './setup/orchestrator.js';
 import { createProfileStore, resolveProfileName } from './setup/profile.js';
 
@@ -165,7 +166,9 @@ function addPacketFilterOptions(command: Command): Command {
     .option('--recipient <handleOrId>', 'Filter by recipient @handle or member id')
     .option('--status <status>', 'Filter by exact packet status')
     .option('--file-symbol <value>', 'Filter by file path or symbol')
-    .option('--ticket-pr <value>', 'Filter by ticket or PR evidence link');
+    .option('--ticket-pr <value>', 'Filter by ticket or PR evidence link')
+    .option('--limit <count>', 'Maximum packets to return')
+    .option('--offset <count>', 'Packets to skip before returning results');
 }
 
 function collectOption(value: string, previous: string[] = []): string[] {
@@ -190,7 +193,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   program
     .name('handoff')
     .description('Human-approved handoffs between coding agents.')
-    .version('0.1.3');
+    .version(runtimeVersion);
 
   registerSetupCommands(program, { io });
 
@@ -652,6 +655,8 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         recipient?: string;
         status?: any;
         fileSymbol?: string;
+        limit?: string;
+        offset?: string;
         ticketPr?: string;
       },
     ) => {
@@ -665,6 +670,8 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         recipient: options.recipient,
         status: options.status,
         fileOrSymbol: options.fileSymbol,
+        limit: options.limit === undefined ? undefined : Number(options.limit),
+        offset: options.offset === undefined ? undefined : Number(options.offset),
         ticketOrPr: options.ticketPr,
       });
       closeBackend(auth.backend);
@@ -689,6 +696,8 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         recipient?: string;
         status?: any;
         fileSymbol?: string;
+        limit?: string;
+        offset?: string;
         ticketPr?: string;
       },
     ) => {
@@ -703,6 +712,8 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         recipient: options.recipient,
         status: options.status,
         fileOrSymbol: options.fileSymbol,
+        limit: options.limit === undefined ? undefined : Number(options.limit),
+        offset: options.offset === undefined ? undefined : Number(options.offset),
         ticketOrPr: options.ticketPr,
       });
       closeBackend(auth.backend);

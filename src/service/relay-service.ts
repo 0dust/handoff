@@ -11,6 +11,7 @@ import {
   type MemberRecord,
   type WorkspaceRecord,
 } from '../identity.js';
+import type { HistoryFilter } from '../protocol/inputs.js';
 import {
   buildPacketDraft,
   compressPacketToBudget,
@@ -27,6 +28,7 @@ import {
 import { assertTransition, type ActorRole } from '../protocol/state-machine.js';
 import { scanPacketForRedactions } from '../redaction.js';
 import type { RelayDatabase } from '../storage/database.js';
+import { PacketRepository, type PacketRepositoryFilters } from './packet-repository.js';
 
 interface MemberRow {
   id: string;
@@ -68,39 +70,6 @@ interface ProjectAliasRow {
   created_at: string;
 }
 
-interface PacketRow {
-  id: string;
-  workspace_id: string;
-  packet_type: RelayPacket['packet_type'];
-  sender_member_id: string;
-  recipient_member_ids: string;
-  parent_packet_id: string | null;
-  status: PacketStatus;
-  title: string;
-  summary: string;
-  question: string | null;
-  finding: string | null;
-  answer: string | null;
-  project: string;
-  source_client: RelayPacket['source_client'];
-  claims: string;
-  evidence: string;
-  files_or_symbols: string;
-  commands_or_tests_run: string;
-  what_was_tried: string;
-  known_failures: string;
-  current_hypothesis: string;
-  confidence: RelayPacket['confidence'];
-  suggested_next_steps: string;
-  redaction_report: string;
-  hydration_policy: string;
-  audit_receipt: string;
-  expires_at: string | null;
-  recheck_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface CreateWorkspaceInput {
   name: string;
   adminHandle: string;
@@ -109,7 +78,7 @@ export interface CreateWorkspaceInput {
 }
 
 export type ApprovalAction = 'hydrate' | 'reply' | 'send';
-export type HistoryFilter = 'all' | 'closed' | 'drafts' | 'open' | 'sent';
+export type { HistoryFilter } from '../protocol/inputs.js';
 
 export interface PacketQueryFilters {
   project?: string;
@@ -117,6 +86,8 @@ export interface PacketQueryFilters {
   recipient?: string;
   status?: PacketStatus;
   fileOrSymbol?: string;
+  limit?: number;
+  offset?: number;
   ticketOrPr?: string;
 }
 
@@ -275,78 +246,12 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
-function rowToPacket(row: PacketRow): RelayPacket {
-  return packetSchema.parse({
-    packet_id: row.id,
-    packet_type: row.packet_type,
-    workspace_id: row.workspace_id,
-    sender_member_id: row.sender_member_id,
-    recipient_member_ids: parseJson<string[]>(row.recipient_member_ids),
-    parent_packet_id: row.parent_packet_id ?? undefined,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    expires_at: row.expires_at ?? undefined,
-    recheck_by: row.recheck_by ?? undefined,
-    status: row.status,
-    project: parseJson(row.project),
-    source_client: row.source_client,
-    title: row.title,
-    summary: row.summary,
-    question: row.question ?? undefined,
-    finding: row.finding ?? undefined,
-    answer: row.answer ?? undefined,
-    claims: parseJson(row.claims),
-    evidence: parseJson(row.evidence),
-    files_or_symbols: parseJson(row.files_or_symbols),
-    commands_or_tests_run: parseJson(row.commands_or_tests_run),
-    what_was_tried: parseJson(row.what_was_tried),
-    known_failures: parseJson(row.known_failures),
-    current_hypothesis: row.current_hypothesis,
-    confidence: row.confidence,
-    suggested_next_steps: parseJson(row.suggested_next_steps),
-    redaction_report: parseJson(row.redaction_report),
-    hydration_policy: parseJson(row.hydration_policy),
-    audit_receipt: parseJson(row.audit_receipt),
-  });
-}
-
-function packetParams(packet: RelayPacket) {
-  return {
-    id: packet.packet_id,
-    workspace_id: packet.workspace_id,
-    packet_type: packet.packet_type,
-    sender_member_id: packet.sender_member_id,
-    recipient_member_ids: JSON.stringify(packet.recipient_member_ids),
-    parent_packet_id: packet.parent_packet_id ?? null,
-    status: packet.status,
-    title: packet.title,
-    summary: packet.summary,
-    question: packet.question ?? null,
-    finding: packet.finding ?? null,
-    answer: packet.answer ?? null,
-    project: JSON.stringify(packet.project),
-    source_client: packet.source_client,
-    claims: JSON.stringify(packet.claims),
-    evidence: JSON.stringify(packet.evidence),
-    files_or_symbols: JSON.stringify(packet.files_or_symbols),
-    commands_or_tests_run: JSON.stringify(packet.commands_or_tests_run),
-    what_was_tried: JSON.stringify(packet.what_was_tried),
-    known_failures: JSON.stringify(packet.known_failures),
-    current_hypothesis: packet.current_hypothesis,
-    confidence: packet.confidence,
-    suggested_next_steps: JSON.stringify(packet.suggested_next_steps),
-    redaction_report: JSON.stringify(packet.redaction_report),
-    hydration_policy: JSON.stringify(packet.hydration_policy),
-    audit_receipt: JSON.stringify(packet.audit_receipt),
-    expires_at: packet.expires_at ?? null,
-    recheck_by: packet.recheck_by ?? null,
-    created_at: packet.created_at,
-    updated_at: packet.updated_at,
-  };
-}
-
 export class RelayService {
-  constructor(private readonly db: RelayDatabase) {}
+  private readonly packets: PacketRepository;
+
+  constructor(private readonly db: RelayDatabase) {
+    this.packets = new PacketRepository(db);
+  }
 
   close(): void {
     this.db.close();
@@ -1125,13 +1030,16 @@ export class RelayService {
     } & PacketQueryFilters,
   ): PacketSearchResult[] {
     const actor = this.requireMember(input.authToken, input.workspaceId);
-    const query = input.query?.toLowerCase() ?? '';
-    const results = this.listWorkspacePackets(input.workspaceId).filter((packet) => {
-      if (!this.canReadMetadata(actor, packet)) return false;
-      if (!this.matchesPacketQueryFilters(actor, packet, input)) return false;
-      if (!query) return true;
-      const haystack = this.searchHaystackFor(actor, packet);
-      return haystack.includes(query);
+    const query = input.query?.trim().toLowerCase() ?? '';
+    const results = this.packets.search({
+      actorIsAdmin: actor.role === 'admin',
+      actorMemberId: actor.id,
+      adminBodyAccess: this.adminBodyAccessFor(actor, input.workspaceId),
+      filters: {
+        ...this.resolveRepositoryFilters(input.workspaceId, input),
+        query,
+      },
+      workspaceId: input.workspaceId,
     });
     this.recordAudit({
       action: 'search',
@@ -1152,13 +1060,17 @@ export class RelayService {
   ): PacketSearchResult[] {
     const actor = this.requireMember(input.authToken, input.workspaceId);
     const filter = input.filter ?? 'all';
-    const query = input.query?.toLowerCase() ?? '';
-    const results = this.listWorkspacePackets(input.workspaceId).filter((packet) => {
-      if (!this.canReadMetadata(actor, packet)) return false;
-      if (!this.matchesHistoryFilter(actor, packet, filter)) return false;
-      if (!this.matchesPacketQueryFilters(actor, packet, input)) return false;
-      if (!query) return true;
-      return this.searchHaystackFor(actor, packet).includes(query);
+    const query = input.query?.trim().toLowerCase() ?? '';
+    const results = this.packets.search({
+      actorIsAdmin: actor.role === 'admin',
+      actorMemberId: actor.id,
+      adminBodyAccess: this.adminBodyAccessFor(actor, input.workspaceId),
+      filters: {
+        ...this.resolveRepositoryFilters(input.workspaceId, input),
+        historyFilter: filter,
+        query,
+      },
+      workspaceId: input.workspaceId,
     });
     this.recordAudit({
       action: 'search',
@@ -1207,13 +1119,11 @@ export class RelayService {
   }
 
   getPacket(packetId: string): RelayPacket {
-    const row = this.db.prepare('SELECT * FROM packets WHERE id = ?').get(packetId) as
-      | PacketRow
-      | undefined;
-    if (!row) {
+    const packet = this.packets.get(packetId);
+    if (!packet) {
       throw relayError('NOT_FOUND', 'Packet not found.', 404);
     }
-    return rowToPacket(row);
+    return packet;
   }
 
   private createPacketDraft(
@@ -1427,45 +1337,6 @@ export class RelayService {
     }
   }
 
-  private searchHaystackFor(actor: MemberRecord, packet: RelayPacket): string {
-    const metadataFields = [
-      packet.packet_id,
-      packet.packet_type,
-      packet.workspace_id,
-      packet.sender_member_id,
-      ...packet.recipient_member_ids,
-      packet.status,
-      packet.title,
-      packet.summary,
-      packet.project.repo_name,
-      packet.project.branch,
-      packet.project.commit_hash,
-      packet.project.git_remote_fingerprint,
-      packet.source_client,
-      packet.created_at,
-      packet.updated_at,
-      packet.expires_at,
-      packet.recheck_by,
-    ];
-    const bodyFields = this.canReadBody(actor, packet)
-      ? [
-          packet.question,
-          packet.finding,
-          packet.answer,
-          packet.current_hypothesis,
-          ...packet.files_or_symbols,
-          ...packet.commands_or_tests_run,
-          ...packet.what_was_tried,
-          ...packet.known_failures,
-          ...packet.suggested_next_steps,
-          ...packet.claims.map((claim) => claim.text),
-          ...packet.evidence.map((item) => `${item.label} ${item.source} ${item.excerpt}`),
-        ]
-      : [];
-
-    return [...metadataFields, ...bodyFields].filter(Boolean).join(' ').toLowerCase();
-  }
-
   private toSearchResult(actor: MemberRecord, packet: RelayPacket): PacketSearchResult {
     return {
       packet_id: packet.packet_id,
@@ -1499,60 +1370,40 @@ export class RelayService {
     );
   }
 
-  private matchesPacketQueryFilters(
-    actor: MemberRecord,
-    packet: RelayPacket,
+  private adminBodyAccessFor(actor: MemberRecord, workspaceId: string): boolean {
+    return actor.role === 'admin' ? this.getWorkspace(workspaceId).admin_body_access : false;
+  }
+
+  private resolveRepositoryFilters(
+    workspaceId: string,
     filters: PacketQueryFilters,
-  ): boolean {
-    if (
-      filters.project &&
-      this.resolveCanonicalProjectName(packet.workspace_id, packet.project.repo_name) !==
-        this.resolveCanonicalProjectName(packet.workspace_id, filters.project)
-    ) {
-      return false;
+  ): PacketRepositoryFilters {
+    return {
+      canonicalProject: filters.project
+        ? this.resolveCanonicalProjectName(workspaceId, filters.project)
+        : undefined,
+      fileOrSymbol: filters.fileOrSymbol,
+      limit: filters.limit,
+      offset: filters.offset,
+      recipientMemberId: this.resolveMemberFilter(workspaceId, filters.recipient),
+      senderMemberId: this.resolveMemberFilter(workspaceId, filters.sender),
+      status: filters.status,
+      ticketOrPr: filters.ticketOrPr,
+    };
+  }
+
+  private resolveMemberFilter(
+    workspaceId: string,
+    selector: string | undefined,
+  ): string | undefined {
+    const trimmed = selector?.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('mem_')) return trimmed;
+    try {
+      return this.findMemberByHandle(workspaceId, trimmed, true)?.id ?? '__relay_no_member__';
+    } catch {
+      return '__relay_no_member__';
     }
-    if (
-      filters.sender &&
-      !this.memberSelectorMatches(packet.workspace_id, packet.sender_member_id, filters.sender)
-    ) {
-      return false;
-    }
-    if (
-      filters.recipient &&
-      !packet.recipient_member_ids.some((memberId) =>
-        this.memberSelectorMatches(packet.workspace_id, memberId, filters.recipient as string),
-      )
-    ) {
-      return false;
-    }
-    if (filters.status && packet.status !== filters.status) {
-      return false;
-    }
-    if (filters.fileOrSymbol) {
-      if (!this.canReadBody(actor, packet)) return false;
-      const needle = filters.fileOrSymbol.trim().toLowerCase();
-      if (
-        needle &&
-        !packet.files_or_symbols.some((entry) => entry.toLowerCase().includes(needle))
-      ) {
-        return false;
-      }
-    }
-    if (filters.ticketOrPr) {
-      if (!this.canReadBody(actor, packet)) return false;
-      const needle = filters.ticketOrPr.trim().toLowerCase();
-      if (
-        needle &&
-        !packet.evidence
-          .filter((item) => item.kind === 'ticket_link' || item.kind === 'pr_link')
-          .some((item) =>
-            [item.label, item.source, item.excerpt].join(' ').toLowerCase().includes(needle),
-          )
-      ) {
-        return false;
-      }
-    }
-    return true;
   }
 
   private resolveCanonicalProjectName(workspaceId: string, projectName: string): string {
@@ -1564,49 +1415,6 @@ export class RelayService {
       )
       .get(workspaceId, name) as { canonical_project: string } | undefined;
     return row?.canonical_project ?? name;
-  }
-
-  private memberSelectorMatches(workspaceId: string, memberId: string, selector: string): boolean {
-    const trimmed = selector.trim();
-    if (!trimmed) return true;
-    if (memberId === trimmed) return true;
-    try {
-      return this.findMemberByHandle(workspaceId, trimmed, true)?.id === memberId;
-    } catch {
-      return false;
-    }
-  }
-
-  private matchesHistoryFilter(
-    actor: MemberRecord,
-    packet: RelayPacket,
-    filter: HistoryFilter,
-  ): boolean {
-    if (filter === 'all') return true;
-    const terminalStatuses: PacketStatus[] = [
-      'archived',
-      'closed_resolved',
-      'closed_unresolved',
-      'declined',
-      'expired',
-      'superseded',
-    ];
-    if (filter === 'closed') {
-      return terminalStatuses.includes(packet.status);
-    }
-    if (filter === 'drafts') {
-      return (
-        packet.sender_member_id === actor.id &&
-        ['pending_sender_approval', 'pending_recipient_approval', 'draft'].includes(packet.status)
-      );
-    }
-    if (filter === 'sent') {
-      return packet.sender_member_id === actor.id && packet.status !== 'pending_sender_approval';
-    }
-    return (
-      !terminalStatuses.includes(packet.status) &&
-      !['draft', 'pending_sender_approval', 'pending_recipient_approval'].includes(packet.status)
-    );
   }
 
   private requireSender(actor: MemberRecord, packet: RelayPacket): void {
@@ -1725,66 +1533,15 @@ export class RelayService {
   }
 
   private insertPacket(packet: RelayPacket): RelayPacket {
-    this.db
-      .prepare(
-        `INSERT INTO packets
-        (id, workspace_id, packet_type, sender_member_id, recipient_member_ids, parent_packet_id,
-         status, title, summary, question, finding, answer, project, source_client, claims, evidence,
-         files_or_symbols, commands_or_tests_run, what_was_tried, known_failures, current_hypothesis,
-         confidence, suggested_next_steps, redaction_report, hydration_policy, audit_receipt,
-         expires_at, recheck_by, created_at, updated_at)
-        VALUES
-        (@id, @workspace_id, @packet_type, @sender_member_id, @recipient_member_ids, @parent_packet_id,
-         @status, @title, @summary, @question, @finding, @answer, @project, @source_client, @claims,
-         @evidence, @files_or_symbols, @commands_or_tests_run, @what_was_tried, @known_failures,
-         @current_hypothesis, @confidence, @suggested_next_steps, @redaction_report, @hydration_policy,
-         @audit_receipt, @expires_at, @recheck_by, @created_at, @updated_at)`,
-      )
-      .run(packetParams(packet));
-    return packet;
+    return this.packets.insert(packet);
   }
 
   private updatePacket(packet: RelayPacket): RelayPacket {
-    this.db
-      .prepare(
-        `UPDATE packets SET
-          recipient_member_ids = @recipient_member_ids,
-          parent_packet_id = @parent_packet_id,
-          status = @status,
-          title = @title,
-          summary = @summary,
-          question = @question,
-          finding = @finding,
-          answer = @answer,
-          project = @project,
-          source_client = @source_client,
-          claims = @claims,
-          evidence = @evidence,
-          files_or_symbols = @files_or_symbols,
-          commands_or_tests_run = @commands_or_tests_run,
-          what_was_tried = @what_was_tried,
-          known_failures = @known_failures,
-          current_hypothesis = @current_hypothesis,
-          confidence = @confidence,
-          suggested_next_steps = @suggested_next_steps,
-          redaction_report = @redaction_report,
-          hydration_policy = @hydration_policy,
-          audit_receipt = @audit_receipt,
-          expires_at = @expires_at,
-          recheck_by = @recheck_by,
-          updated_at = @updated_at
-        WHERE id = @id`,
-      )
-      .run(packetParams(packet));
-    return packet;
+    return this.packets.update(packet);
   }
 
   private listWorkspacePackets(workspaceId: string): RelayPacket[] {
-    return (
-      this.db
-        .prepare('SELECT * FROM packets WHERE workspace_id = ? ORDER BY created_at DESC')
-        .all(workspaceId) as PacketRow[]
-    ).map(rowToPacket);
+    return this.packets.listWorkspacePackets(workspaceId);
   }
 
   private createNotification(packet: RelayPacket, memberId: string): void {
