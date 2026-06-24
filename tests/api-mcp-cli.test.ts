@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 
+import packageJson from '../package.json' with { type: 'json' };
 import { RelayApiClient } from '../src/api/client.js';
 import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
@@ -76,6 +77,22 @@ async function startWebhookServer() {
 }
 
 describe('coordination API', () => {
+  test('runtime surfaces report the package version from a shared constant', async () => {
+    const { runtimeVersion } = await import('../src/runtime/version.js');
+    const { service } = createService();
+    const app = buildApiServer({ service });
+
+    const health = await app.inject({
+      method: 'GET',
+      url: '/health',
+    });
+    const cli = await runCli(['--version']);
+
+    expect(runtimeVersion).toBe(packageJson.version);
+    expect(health.json().version).toBe(runtimeVersion);
+    expect(cli.stdout.trim()).toBe(runtimeVersion);
+  });
+
   test('API client reports a machine-readable server-unavailable error', async () => {
     const closedServer = createServer();
     await new Promise<void>((resolve) => closedServer.listen(0, '127.0.0.1', resolve));
@@ -269,6 +286,87 @@ describe('coordination API', () => {
     });
   });
 
+  test('invalid workspace admin handles return INVALID_INPUT instead of INTERNAL_ERROR', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/workspaces',
+      payload: { name: 'Invalid Handle Team', adminHandle: '!', adminName: 'Sam' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+  });
+
+  test('invalid invite handles return INVALID_INPUT instead of INTERNAL_ERROR', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'Invalid Invite Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/workspaces/${workspace.workspace.id}/invites`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+      payload: { handle: '!' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+  });
+
+  test('search and history honor pagination query parameters', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'Pagination Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    for (const title of ['Pagination one', 'Pagination two', 'Pagination three']) {
+      service.createAskDraft({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        question: `Can you inspect ${title}?`,
+        title,
+        summary: 'Pagination regression packet.',
+        sourceClient: 'codex',
+      });
+    }
+
+    const search = await app.inject({
+      method: 'GET',
+      url: `/search?workspaceId=${workspace.workspace.id}&q=Pagination&limit=1`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
+    const history = await app.inject({
+      method: 'GET',
+      url: `/history?workspaceId=${workspace.workspace.id}&limit=2&offset=1`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
+
+    expect(search.statusCode).toBe(200);
+    expect(search.json()).toHaveLength(1);
+    expect(history.statusCode).toBe(200);
+    expect(history.json()).toHaveLength(2);
+  });
+
   test('invite GET endpoint shows a join command without accepting the invite', async () => {
     const { service } = createService();
     const app = buildApiServer({ service });
@@ -300,6 +398,21 @@ describe('coordination API', () => {
 });
 
 describe('MCP tool contracts', () => {
+  test('packet tools reuse shared protocol input schemas', async () => {
+    const { service } = createService();
+    const { confidenceInputSchema, packetQueryInputShape, sourceClientInputSchema } =
+      await import('../src/protocol/inputs.js');
+    const tools = getMcpToolDefinitions(service);
+    const askTool = tools.find((tool) => tool.name === 'relay_ask');
+    const searchTool = tools.find((tool) => tool.name === 'relay_search');
+
+    expect(askTool?.inputSchema.sourceClient).toBe(sourceClientInputSchema);
+    expect(askTool?.inputSchema.confidence).toBe(confidenceInputSchema);
+    for (const [field, schema] of Object.entries(packetQueryInputShape)) {
+      expect(searchTool?.inputSchema[field]).toBe(schema);
+    }
+  });
+
   test('exposes the core Relay tools and delegates to service operations', async () => {
     const { service } = createService();
     const workspace = service.createWorkspace({

@@ -25,6 +25,7 @@ export const packetStatuses = [
 
 export const packetTypes = ['ask', 'share', 'reply', 'clarification'] as const;
 export const confidenceLevels = ['low', 'medium', 'high'] as const;
+export const sourceClients = ['claude-code', 'codex', 'cursor', 'generic', 'other'] as const;
 
 export const auditReceiptSchema = z.object({
   receipt_id: z.string().min(1),
@@ -130,7 +131,7 @@ export const packetSchema = z
     recheck_by: z.string().datetime().optional(),
     status: z.enum(packetStatuses),
     project: projectIdentitySchema,
-    source_client: z.enum(['claude-code', 'codex', 'cursor', 'generic', 'other']),
+    source_client: z.enum(sourceClients),
     title: z.string().min(1).max(200),
     summary: z.string().min(1).max(5000),
     question: z.string().optional(),

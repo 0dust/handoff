@@ -3,7 +3,16 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { RelayApiClient } from '../api/client.js';
-import { packetStatuses } from '../protocol/schema.js';
+import {
+  claimInputSchema,
+  confidenceInputSchema,
+  evidenceInputSchema,
+  historyFilterInputSchema,
+  packetQueryInputShape,
+  projectInputSchema,
+  sourceClientInputSchema,
+} from '../protocol/inputs.js';
+import { runtimeVersion } from '../runtime/version.js';
 import { RelayService, type ApprovalAction } from '../service/relay-service.js';
 import { createBackendForProfile } from '../setup/orchestrator.js';
 import { createProfileStore, resolveProfileName, type ProfileStore } from '../setup/profile.js';
@@ -16,65 +25,13 @@ export interface McpToolDefinition {
   handler: (args: any) => any | Promise<any>;
 }
 
-const sourceClient = z
-  .enum(['claude-code', 'codex', 'cursor', 'generic', 'other'])
-  .default('generic');
-const confidence = z.enum(['low', 'medium', 'high']).optional();
-const historyFilter = z.enum(['all', 'drafts', 'sent', 'open', 'closed']).optional();
-const projectInput = z
-  .object({
-    repo_name: z.string(),
-    git_remote_fingerprint: z.string().optional(),
-    branch: z.string().optional(),
-    commit_hash: z.string().optional(),
-  })
-  .optional();
-const packetQueryInput = {
-  project: z.string().optional(),
-  sender: z.string().optional(),
-  recipient: z.string().optional(),
-  status: z.enum(packetStatuses).optional(),
-  fileOrSymbol: z.string().optional(),
-  ticketOrPr: z.string().optional(),
-};
-const evidenceInput = z
-  .array(
-    z.object({
-      evidence_id: z.string().optional(),
-      kind: z
-        .enum([
-          'file_excerpt',
-          'command_output',
-          'test_failure',
-          'error_message',
-          'log_excerpt',
-          'diff_summary',
-          'ticket_link',
-          'pr_link',
-          'human_note',
-        ])
-        .default('human_note'),
-      label: z.string(),
-      source: z.string(),
-      excerpt: z.string(),
-      hash: z.string().optional(),
-      captured_at: z.string().optional(),
-      sensitivity: z.enum(['normal', 'private', 'secret_detected', 'restricted']).optional(),
-    }),
-  )
-  .optional();
-const claimInput = z
-  .array(
-    z.object({
-      claim_id: z.string().optional(),
-      text: z.string(),
-      confidence: z.enum(['low', 'medium', 'high']).optional(),
-      status: z.enum(['observed', 'inferred', 'suspected', 'disproven', 'superseded']).optional(),
-      evidence_ids: z.array(z.string()).optional(),
-      needs_recheck: z.boolean().optional(),
-    }),
-  )
-  .optional();
+const sourceClient = sourceClientInputSchema;
+const confidence = confidenceInputSchema;
+const historyFilter = historyFilterInputSchema;
+const projectInput = projectInputSchema;
+const packetQueryInput = packetQueryInputShape;
+const evidenceInput = evidenceInputSchema;
+const claimInput = claimInputSchema;
 
 type RelayBackend = RelayService | RelayApiClient;
 
@@ -402,7 +359,7 @@ export function createMcpServer(
   service: RelayBackend,
   options: McpDefinitionOptions = {},
 ): McpServer {
-  const server = new McpServer({ name: 'handoff', version: '0.1.3' });
+  const server = new McpServer({ name: 'handoff', version: runtimeVersion });
   for (const tool of getMcpToolDefinitions(service, options)) {
     server.registerTool(
       tool.name,

@@ -2,11 +2,17 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { isRelayError } from '../errors.js';
-import { packetStatuses } from '../protocol/schema.js';
+import {
+  confidenceInputSchema,
+  evidenceInputSchema,
+  packetDraftInputShape,
+  packetQueryInputShape,
+  sourceClientInputSchema,
+  sourceClients,
+} from '../protocol/inputs.js';
+import { runtimeVersion } from '../runtime/version.js';
 import { RelayService } from '../service/relay-service.js';
 import { createRelayDatabase } from '../storage/database.js';
-
-const sourceClients = ['claude-code', 'codex', 'cursor', 'generic', 'other'] as const;
 
 export interface ApiServerOptions {
   service: RelayService;
@@ -23,21 +29,13 @@ function bearer(request: { headers: Record<string, unknown> }): string {
 export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const service = options.service;
-  const packetQuerySchema = {
-    project: z.string().optional(),
-    sender: z.string().optional(),
-    recipient: z.string().optional(),
-    status: z.enum(packetStatuses).optional(),
-    fileOrSymbol: z.string().optional(),
-    ticketOrPr: z.string().optional(),
-  };
 
   app.get('/health', async () => ({
     name: 'handoff',
     ok: true,
     pid: process.pid,
     server_id: process.env.HANDOFF_SERVER_ID,
-    version: '0.1.3',
+    version: runtimeVersion,
   }));
 
   app.setErrorHandler((error, _request, reply) => {
@@ -193,17 +191,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
         question: z.string(),
         title: z.string(),
         summary: z.string(),
-        sourceClient: z.enum(sourceClients).default('generic'),
-        project: z.record(z.string(), z.unknown()).optional(),
-        claims: z.array(z.record(z.string(), z.unknown())).optional(),
-        evidence: z.array(z.record(z.string(), z.unknown())).optional(),
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence: z.enum(['low', 'medium', 'high']).optional(),
-        suggestedNextSteps: z.array(z.string()).optional(),
+        ...packetDraftInputShape,
       })
       .parse(request.body);
     return service.createAskDraft({
@@ -235,17 +223,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
         finding: z.string(),
         title: z.string(),
         summary: z.string(),
-        sourceClient: z.enum(sourceClients).default('generic'),
-        project: z.record(z.string(), z.unknown()).optional(),
-        claims: z.array(z.record(z.string(), z.unknown())).optional(),
-        evidence: z.array(z.record(z.string(), z.unknown())).optional(),
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence: z.enum(['low', 'medium', 'high']).optional(),
-        suggestedNextSteps: z.array(z.string()).optional(),
+        ...packetDraftInputShape,
       })
       .parse(request.body);
     return service.createShareDraft({
@@ -277,15 +255,15 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
         summary: z.string().optional(),
         question: z.string().optional(),
         finding: z.string().optional(),
-        claims: z.array(z.record(z.string(), z.unknown())).optional(),
-        evidence: z.array(z.record(z.string(), z.unknown())).optional(),
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence: z.enum(['low', 'medium', 'high']).optional(),
-        suggestedNextSteps: z.array(z.string()).optional(),
+        claims: packetDraftInputShape.claims,
+        evidence: packetDraftInputShape.evidence,
+        filesOrSymbols: packetDraftInputShape.filesOrSymbols,
+        commandsOrTestsRun: packetDraftInputShape.commandsOrTestsRun,
+        whatWasTried: packetDraftInputShape.whatWasTried,
+        knownFailures: packetDraftInputShape.knownFailures,
+        currentHypothesis: packetDraftInputShape.currentHypothesis,
+        confidence: packetDraftInputShape.confidence,
+        suggestedNextSteps: packetDraftInputShape.suggestedNextSteps,
       })
       .parse(request.body);
     return service.updateDraft({
@@ -380,9 +358,9 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
       .object({
         answer: z.string(),
         summary: z.string(),
-        sourceClient: z.enum(sourceClients).default('generic'),
-        evidence: z.array(z.record(z.string(), z.unknown())).optional(),
-        confidence: z.enum(['low', 'medium', 'high']).optional(),
+        sourceClient: sourceClientInputSchema,
+        evidence: evidenceInputSchema,
+        confidence: confidenceInputSchema,
       })
       .parse(request.body);
     return service.createReplyDraft({
@@ -439,7 +417,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
 
   app.get('/search', async (request) => {
     const query = z
-      .object({ workspaceId: z.string(), q: z.string().optional(), ...packetQuerySchema })
+      .object({ workspaceId: z.string(), q: z.string().optional(), ...packetQueryInputShape })
       .parse(request.query);
     return service.searchPackets({
       authToken: bearer(request),
@@ -451,6 +429,8 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
       status: query.status,
       fileOrSymbol: query.fileOrSymbol,
       ticketOrPr: query.ticketOrPr,
+      limit: query.limit,
+      offset: query.offset,
     });
   });
 
@@ -460,7 +440,7 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
         workspaceId: z.string(),
         filter: z.enum(['all', 'drafts', 'sent', 'open', 'closed']).optional(),
         q: z.string().optional(),
-        ...packetQuerySchema,
+        ...packetQueryInputShape,
       })
       .parse(request.query);
     return service.listHistory({
@@ -474,6 +454,8 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
       status: query.status,
       fileOrSymbol: query.fileOrSymbol,
       ticketOrPr: query.ticketOrPr,
+      limit: query.limit,
+      offset: query.offset,
     });
   });
 
