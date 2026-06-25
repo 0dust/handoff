@@ -9,14 +9,14 @@ On Sam's machine, host a LAN-reachable workspace:
 ```bash
 npx -y handoff-relay start --lan
 npx -y handoff-relay invite alice
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
 npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the profile-backed MCP command for her Claude Code config.

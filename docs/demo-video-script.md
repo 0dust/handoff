@@ -40,7 +40,7 @@ rm -f .relay/demo-video.db .relay/demo-video.db-shm .relay/demo-video.db-wal
 5. Show optional native desktop and webhook notification flags:
 
    ```bash
-   npx -y handoff-relay watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --desktop-notifications
+   npx -y handoff-relay watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id>
    npx -y handoff-relay watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --webhook-url https://hooks.example.test/relay
    ```
 

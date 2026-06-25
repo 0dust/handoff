@@ -10,7 +10,7 @@ On the host/admin machine, create a LAN-reachable workspace:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 Create one invite per teammate:
@@ -24,7 +24,7 @@ Each teammate runs their own join command:
 
 ```bash
 npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 Use `--install-mcp cursor` for Cursor. For Claude Code, run the printed `claude mcp add-json` command after `start` or `join`.

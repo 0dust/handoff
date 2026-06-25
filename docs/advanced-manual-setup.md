@@ -186,7 +186,7 @@ npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <member-token> \
   --workspace <workspace-id> \
-  --desktop-notifications
+  --no-desktop-notifications
 
 npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \

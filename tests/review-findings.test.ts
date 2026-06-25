@@ -1386,6 +1386,7 @@ describe('adapter parity and notifications', () => {
       alice.member.token,
       '--workspace',
       workspace.workspace.id,
+      '--no-desktop-notifications',
       '--once',
     ]);
 

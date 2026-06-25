@@ -912,6 +912,15 @@ describe('MCP tool contracts', () => {
 });
 
 describe('CLI and watcher', () => {
+  test('watch help documents desktop notifications as the default', async () => {
+    const help = await runCli(['watch', '--help']);
+
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain('desktop notifications are enabled by default');
+    expect(help.stdout).toContain('--no-desktop-notifications');
+    expect(help.stdout).toContain('--desktop-notifications');
+  });
+
   test('server mcp forwards the agent approvals flag to startup', async () => {
     const calls: any[] = [];
     const program = new Command();
@@ -1254,6 +1263,7 @@ describe('CLI and watcher', () => {
         workspace.workspace.id,
         '--webhook-url',
         webhook.url,
+        '--no-desktop-notifications',
         '--once',
       ]);
 
@@ -1277,6 +1287,7 @@ describe('CLI and watcher', () => {
         workspace.workspace.id,
         '--webhook-url',
         webhook.url,
+        '--no-desktop-notifications',
         '--once',
       ]);
 

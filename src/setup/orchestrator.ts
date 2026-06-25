@@ -316,7 +316,7 @@ export async function joinInvite(input: {
         profile: existing,
         mcp: summarizeMcpSetup({ env, profileName, skipped: input.noMcpInstall }),
         nextAgentInstruction:
-          'Use Handoff to check notifications with `handoff watch --desktop-notifications`, then use relay_inbox -> relay_review -> relay_hydrate_approved for received packets.',
+          'Use Handoff to check notifications with `handoff watch`, then use relay_inbox -> relay_review -> relay_hydrate_approved for received packets.',
       };
     }
   }

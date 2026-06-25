@@ -128,7 +128,7 @@ Approval secrets stay outside MCP config. `HANDOFF_APPROVAL_SECRET` and the olde
 
 ## Watch Mode
 
-Terminal polling watcher:
+Poll for packet notifications and show terminal plus best-effort desktop notifications:
 
 ```bash
 npx -y handoff-relay watch \
@@ -138,14 +138,14 @@ npx -y handoff-relay watch \
   --interval 5000
 ```
 
-Add best-effort native desktop notifications on the machine running the watcher:
+Disable desktop notifications for terminal-only scripts or CI:
 
 ```bash
 npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \
-  --desktop-notifications
+  --no-desktop-notifications
 ```
 
 Post concise notification summaries to a generic webhook endpoint:

@@ -737,9 +737,11 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     program
       .command('watch')
+      .description('Poll packet notifications; desktop notifications are enabled by default')
       .option('--interval <ms>', 'Polling interval in ms', '5000')
       .option('--once', 'Poll once and exit')
-      .option('--desktop-notifications', 'Also send best-effort native desktop notifications')
+      .option('--no-desktop-notifications', 'Only print terminal notifications')
+      .option('--desktop-notifications', 'Send best-effort native desktop notifications (default)')
       .option(
         '--webhook-url <url>',
         'Also POST notification summaries to a generic webhook URL',
@@ -764,7 +766,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       const auth = createAuthContext(options);
       const notify = createNotificationDispatcher({
         writeTerminal: (message) => io.writeErr(`${message}\n`),
-        desktop: options.desktopNotifications,
+        desktop: options.desktopNotifications !== false,
         webhookUrl: options.webhookUrl,
         webhookHeaders: parseWebhookHeaders(options.webhookHeader),
         onError: (error, channel) => {
@@ -833,6 +835,7 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
 }
 
 function configureOutputRecursively(command: Command, output: OutputConfiguration): void {
+  command.exitOverride();
   command.configureOutput(output);
   for (const subcommand of command.commands) {
     configureOutputRecursively(subcommand, output);

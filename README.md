@@ -50,7 +50,7 @@ Host/admin on the machine that will host the workspace:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 Use `--install-mcp cursor` for Cursor. For Claude Code, run `start --lan`, then add the MCP command printed by Handoff with `claude mcp add-json`.
@@ -65,7 +65,7 @@ Each teammate runs the join command from their invite:
 
 ```bash
 npx -y handoff-relay join <invite-link> --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 After that, use Handoff inside the agent. The sender path is `relay_share` or `relay_ask` -> human review -> `relay_send_approved`. The recipient path is `relay_inbox` -> `relay_review` -> human review -> `relay_hydrate_approved`.
@@ -102,7 +102,7 @@ On the host:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 This creates:
@@ -147,7 +147,7 @@ Each teammate runs their invite command on their own machine:
 
 ```bash
 npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 This creates the teammate's local profile, stores member credentials, wires MCP for Codex, and starts visible packet notifications.
@@ -272,7 +272,7 @@ Set up Handoff as the host/admin for my team.
 2. Start a reachable team workspace with `start --lan --install-mcp codex`.
 3. If I use Cursor, use `start --lan --install-mcp cursor` instead.
    If I use Claude Code, show me the `claude mcp add-json` command.
-4. Start packet notifications with `watch --desktop-notifications`.
+4. Start packet notifications with `watch`.
 5. Invite each teammate I name and give me their exact join commands.
 6. Run `doctor`.
 7. Confirm whether my coding agent can see `relay_share`, `relay_send_approved`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
@@ -287,7 +287,7 @@ Set up my machine as a Handoff team member.
 2. Run the join command my teammate sent me with `--install-mcp codex`.
 3. If I use Cursor, use `--install-mcp cursor` instead.
    If I use Claude Code, show me the `claude mcp add-json` command after join succeeds.
-4. Start packet notifications with `watch --desktop-notifications`.
+4. Start packet notifications with `watch`.
 5. Run `doctor`.
 6. Confirm whether my coding agent can see `relay_inbox`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```
@@ -316,7 +316,7 @@ If I approve, call relay_hydrate_approved.
 Keep notifications running in a terminal:
 
 ```bash
-npx -y handoff-relay watch --desktop-notifications
+npx -y handoff-relay watch
 ```
 
 Handoff MCP tools are grouped by workflow:
