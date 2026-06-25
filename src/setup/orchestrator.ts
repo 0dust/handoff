@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 
 import { RelayApiClient } from '../api/client.js';
-import { normalizeHandle } from '../identity.js';
+import { RelayError } from '../errors.js';
+import { createToken, normalizeHandle } from '../identity.js';
 import { RelayService } from '../service/relay-service.js';
 import { createRelayDatabase } from '../storage/database.js';
 import { buildInviteLink, parseInviteLink } from './invite-link.js';
@@ -72,6 +73,21 @@ export interface JoinInviteResult {
   mcp: McpSetupSummary;
   nextAgentInstruction: string;
   profile: HandoffProfile;
+}
+
+export interface LeaveWorkspaceProfileResult {
+  alreadyRemoved: boolean;
+  hadProfile: boolean;
+  handle?: string;
+  profileName: string;
+  workspaceName?: string;
+}
+
+export interface RemoveWorkspaceMemberResult {
+  alreadyRemoved: boolean;
+  handle: string;
+  memberId: string;
+  workspaceName: string;
 }
 
 export function createBackendForProfile(input: {
@@ -256,10 +272,68 @@ export async function joinInvite(input: {
   const parts = parseInviteLink(input.invite, input.serverUrl);
   const profileName = resolveProfileName(input.profileName, env);
   const displayName = input.displayName ?? inferDisplayName(env);
+  const store = createProfileStore({ env, home: input.home });
+  const pendingAttempt = store.loadPendingJoinAttempt(profileName);
+  const pending = reusablePendingJoinAttempt({
+    attempt: pendingAttempt,
+    displayName,
+    invite: input.invite,
+    profileName,
+    serverUrl: parts.serverUrl,
+  });
   const client = new RelayApiClient({ serverUrl: parts.serverUrl });
+  const existing = store.loadProfile(profileName);
+  if (existing) {
+    if (!store.credentialsExist(existing.profileName)) {
+      if (pending) {
+        store.savePendingJoinAttempt(pending);
+      } else {
+        throw new Error(
+          `Handoff profile "${profileName}" exists, but its credentials are missing. Ask the workspace admin to run \`handoff remove-member ${existing.handle}\`, then join this invite with \`--profile <new-name>\`.`,
+        );
+      }
+    } else {
+      const invite = await client.getInvite({ inviteToken: parts.inviteToken });
+      const inviteWorkspaceId =
+        typeof invite.workspace === 'object' && invite.workspace && 'id' in invite.workspace
+          ? String(invite.workspace.id)
+          : undefined;
+      const inviteHandle =
+        typeof invite.invite === 'object' && invite.invite && 'handle' in invite.invite
+          ? String(invite.invite.handle)
+          : undefined;
+      if (
+        existing.serverUrl !== parts.serverUrl ||
+        existing.workspaceId !== inviteWorkspaceId ||
+        existing.handle !== inviteHandle
+      ) {
+        throw new Error(
+          `Handoff profile "${profileName}" is already joined as @${existing.handle}. Use --profile <new-name> for another invite.`,
+        );
+      }
+      return {
+        backend: new RelayApiClient({ serverUrl: existing.serverUrl }),
+        profile: existing,
+        mcp: summarizeMcpSetup({ env, profileName, skipped: input.noMcpInstall }),
+        nextAgentInstruction:
+          'Use Handoff to check notifications with `handoff watch --desktop-notifications`, then use relay_inbox -> relay_review -> relay_hydrate_approved for received packets.',
+      };
+    }
+  }
+  const nextPending = pending ?? {
+    schemaVersion: 1 as const,
+    displayName,
+    idempotencyKey: createToken('relay_join'),
+    invite: input.invite,
+    profileName,
+    serverUrl: parts.serverUrl,
+    createdAt: new Date().toISOString(),
+  };
+  store.savePendingJoinAttempt(nextPending);
   const accepted = await client.acceptInvite({
     inviteToken: parts.inviteToken,
     displayName,
+    idempotencyKey: nextPending.idempotencyKey,
   });
   const now = new Date().toISOString();
   const profile: HandoffProfile = {
@@ -276,13 +350,13 @@ export async function joinInvite(input: {
     createdAt: now,
     lastVerifiedAt: now,
   };
-  const store = createProfileStore({ env, home: input.home });
   store.saveProfile(profile);
   store.saveCredentials(profileName, {
     memberToken: accepted.member.token,
     approvalSecret: accepted.member.approval_secret,
     createdAt: now,
   });
+  store.deletePendingJoinAttempt(profileName);
   await client.listInbox({
     authToken: accepted.member.token,
     workspaceId: accepted.workspace.id,
@@ -299,8 +373,100 @@ export async function joinInvite(input: {
     profile,
     mcp: summarizeMcpSetup({ env, profileName, skipped: input.noMcpInstall }),
     nextAgentInstruction:
-      'Use Handoff to package the current investigation context for a teammate.',
+      'Use Handoff to package context for a teammate with relay_share -> relay_send_approved, or receive with relay_inbox -> relay_review -> relay_hydrate_approved.',
   };
+}
+
+function reusablePendingJoinAttempt(input: {
+  attempt: ReturnType<ProfileStore['loadPendingJoinAttempt']>;
+  displayName: string;
+  invite: string;
+  profileName: string;
+  serverUrl: string;
+}) {
+  if (
+    input.attempt &&
+    input.attempt.displayName === input.displayName &&
+    input.attempt.invite === input.invite &&
+    input.attempt.profileName === input.profileName &&
+    input.attempt.serverUrl === input.serverUrl
+  ) {
+    return input.attempt;
+  }
+  return undefined;
+}
+
+export async function leaveWorkspaceProfile(
+  input: {
+    env?: HandoffEnv;
+    home?: string;
+    profileName?: string;
+  } = {},
+): Promise<LeaveWorkspaceProfileResult> {
+  const env = input.env ?? process.env;
+  const store = createProfileStore({ env, home: input.home });
+  const profileName = resolveProfileName(input.profileName, env);
+  const profile = store.loadProfile(profileName);
+  if (!profile) {
+    return { alreadyRemoved: true, hadProfile: false, profileName };
+  }
+  let result: { alreadyRemoved?: boolean } | undefined;
+  const credentials = store.loadCredentials(profile.profileName);
+  const backend = createBackendForProfile({ profile, credentials });
+  try {
+    result = await backend.leaveWorkspace({
+      authToken: credentials.memberToken,
+      workspaceId: profile.workspaceId,
+    });
+  } catch (error) {
+    if (!isAlreadyRemovedError(error)) {
+      throw error;
+    }
+    result = { alreadyRemoved: true };
+  } finally {
+    if (backend instanceof RelayService) {
+      backend.close();
+    }
+  }
+  store.deleteProfile(profile.profileName);
+  return {
+    alreadyRemoved: Boolean(result?.alreadyRemoved),
+    hadProfile: true,
+    handle: profile.handle,
+    profileName: profile.profileName,
+    workspaceName: profile.workspaceName,
+  };
+}
+
+export async function removeWorkspaceMember(input: {
+  env?: HandoffEnv;
+  home?: string;
+  member: string;
+  profileName?: string;
+}): Promise<RemoveWorkspaceMemberResult> {
+  const env = input.env ?? process.env;
+  const store = createProfileStore({ env, home: input.home });
+  const profileName = resolveProfileName(input.profileName, env);
+  const profile = requireProfile(store, profileName);
+  const credentials = store.loadCredentials(profile.profileName);
+  const backend = createBackendForProfile({ profile, credentials });
+  try {
+    const result = await backend.removeMember({
+      adminToken: credentials.memberToken,
+      workspaceId: profile.workspaceId,
+      member: input.member,
+    });
+    return {
+      alreadyRemoved: Boolean(result.alreadyRemoved),
+      handle: result.member.handle,
+      memberId: result.member.id,
+      workspaceName: profile.workspaceName,
+    };
+  } finally {
+    if (backend instanceof RelayService) {
+      backend.close();
+    }
+  }
 }
 
 function requireProfile(store: ProfileStore, profileName: string): HandoffProfile {
@@ -311,6 +477,10 @@ function requireProfile(store: ProfileStore, profileName: string): HandoffProfil
     );
   }
   return profile;
+}
+
+function isAlreadyRemovedError(error: unknown): boolean {
+  return error instanceof RelayError && error.code === 'TOKEN_REVOKED';
 }
 
 function portFromUrl(value: string | undefined): number | undefined {

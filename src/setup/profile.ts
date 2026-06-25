@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, chmodSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,6 +35,16 @@ export interface HandoffCredentials {
   approvalSecret: string;
   createdAt: string;
   lastRotationAt?: string;
+}
+
+export interface PendingJoinAttempt {
+  schemaVersion: 1;
+  displayName: string;
+  idempotencyKey: string;
+  invite: string;
+  profileName: string;
+  serverUrl: string;
+  createdAt: string;
 }
 
 export interface HandoffEnv {
@@ -60,6 +78,10 @@ export class ProfileStore {
 
   credentialPath(profileName: string): string {
     return join(this.home, 'credentials', `${sanitizeProfileName(profileName)}.json`);
+  }
+
+  joinAttemptPath(profileName: string): string {
+    return join(this.home, 'run', `join-${sanitizeProfileName(profileName)}.json`);
   }
 
   localDatabasePath(profileName: string): string {
@@ -110,6 +132,11 @@ export class ProfileStore {
     return existsSync(this.credentialPath(profileName));
   }
 
+  deleteProfile(profileName: string): void {
+    rmSync(this.profilePath(profileName), { force: true });
+    rmSync(this.credentialPath(profileName), { force: true });
+  }
+
   credentialPermissions(profileName: string): number | undefined {
     const path = this.credentialPath(profileName);
     if (!existsSync(path)) return undefined;
@@ -120,6 +147,29 @@ export class ProfileStore {
     const mode = this.credentialPermissions(profileName);
     if (mode === undefined) return false;
     return (mode & 0o077) === 0;
+  }
+
+  loadPendingJoinAttempt(profileName: string): PendingJoinAttempt | undefined {
+    const path = this.joinAttemptPath(profileName);
+    if (!existsSync(path)) return undefined;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as PendingJoinAttempt;
+    if (parsed.schemaVersion !== 1) {
+      throw new Error(`Unsupported Handoff join attempt schema version for ${profileName}.`);
+    }
+    return parsed;
+  }
+
+  savePendingJoinAttempt(attempt: PendingJoinAttempt): void {
+    this.ensureHome();
+    writeFileSync(
+      this.joinAttemptPath(attempt.profileName),
+      `${JSON.stringify(attempt, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  }
+
+  deletePendingJoinAttempt(profileName: string): void {
+    rmSync(this.joinAttemptPath(profileName), { force: true });
   }
 }
 

@@ -21,7 +21,8 @@ npx -y handoff-relay invite alice
 If you are joining someone else's workspace, ask them for the invite command and run:
 
 ```bash
-npx -y handoff-relay join <invite-link>
+npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay watch --desktop-notifications
 ```
 
 Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
@@ -103,8 +104,8 @@ npx -y handoff-relay status <packet-id> --db .relay/team.db --token <sender-toke
 
 Strict mode requires explicit review and a human approval token:
 
-- Ask/share packets: recipient must `view`, then `accept`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
-- Reply packets: sender must `view`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
+- Ask/share packets: recipient should `relay_review`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
+- Reply packets: sender should `relay_review`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
 
 Invalid transitions return `INVALID_STATE_TRANSITION`.
 
@@ -145,7 +146,7 @@ If an approval secret leaks, rotate it and update your local secret manager:
 npx -y handoff-relay member rotate-approval-secret --db .relay/team.db --token <member-token> --approval-secret <current-approval-secret> --json
 ```
 
-The old approval secret stops working immediately, and unconsumed approval tokens already minted by that member are invalidated. If you no longer have the current approval secret, ask a workspace admin to revoke and reinvite the member.
+The old approval secret stops working immediately, and unconsumed approval tokens already minted by that member are invalidated. If a teammate leaves or is removed, their unconsumed approval tokens are invalidated too.
 
 ## Packet Needs More Evidence
 
@@ -157,7 +158,7 @@ npx -y handoff-relay clarify <packet-id> --db .relay/team.db --token <recipient-
 
 ## Watcher Prints Nothing
 
-The watcher only reports new packet ids once per process. Check `inbox` directly:
+The watcher reads the durable notification queue and acknowledges a notification after it is delivered locally. Check `inbox` directly:
 
 ```bash
 npx -y handoff-relay inbox --db .relay/team.db --token <token> --workspace <workspace-id>

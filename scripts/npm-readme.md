@@ -9,8 +9,8 @@ Handoff lets Codex, Claude Code, Cursor, and other MCP-capable agents send bound
 On the host/admin machine, create a LAN-reachable workspace:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay doctor
+npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay watch --desktop-notifications
 ```
 
 Create one invite per teammate:
@@ -23,11 +23,13 @@ npx -y handoff-relay invite bob
 Each teammate runs their own join command:
 
 ```bash
-npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token>
-npx -y handoff-relay doctor
+npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
+npx -y handoff-relay watch --desktop-notifications
 ```
 
-`start` creates the shared workspace, host profile, SQLite coordination database, and reachable server URL. `join` stores the teammate's local profile and member credentials.
+Use `--install-mcp cursor` for Cursor. For Claude Code, run the printed `claude mcp add-json` command after `start` or `join`.
+
+`start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, and MCP config when requested. `join` stores the teammate's local profile and member credentials. `watch` sends desktop/webhook-ready notifications when packets arrive.
 
 ## Use With Agents
 
@@ -57,14 +59,16 @@ Ask the sending agent:
 ```text
 Use Handoff to create a Relay Packet for @alice from this session.
 Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Draft only. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
+Draft with relay_share or relay_ask. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
+If I approve, call relay_send_approved.
 ```
 
 Ask the receiving agent:
 
 ```text
-Check my Handoff inbox. Show me the Relay Packet before hydration.
-If I approve, hydrate it into this session.
+Check my Handoff inbox.
+Call relay_review on the packet and show me the Relay Packet before hydration.
+If I approve, call relay_hydrate_approved.
 ```
 
 ## Client Setup
@@ -142,6 +146,8 @@ Requires Node.js 20+.
 handoff start [--lan] [--install-mcp codex|cursor]
 handoff invite <handle>
 handoff join <invite-link> [--install-mcp codex|cursor]
+handoff leave
+handoff remove-member <handle-or-id>
 handoff doctor
 handoff server mcp --profile default
 handoff approval-token <packet-id> --action send|hydrate|reply
@@ -155,24 +161,23 @@ handoff demo two-user
 
 ## MCP Tools
 
-| Tool                 | Purpose                                                  |
-| -------------------- | -------------------------------------------------------- |
-| `relay_ask`          | Draft an ask packet for another teammate.                |
-| `relay_share`        | Draft a share packet from current context.               |
-| `relay_update_draft` | Edit a draft before approval.                            |
-| `relay_approve`      | Approve and send an ask, share, or reply packet.         |
-| `relay_inbox`        | List packets addressed to the current member.            |
-| `relay_status`       | Fetch a readable packet.                                 |
-| `relay_view`         | Record that a packet was reviewed.                       |
-| `relay_accept`       | Mark recipient acceptance before hydration.              |
-| `relay_hydrate`      | Return bounded context plus a hydration receipt.         |
-| `relay_reply`        | Draft a reply packet.                                    |
-| `relay_clarify`      | Request more information or evidence.                    |
-| `relay_decline`      | Decline an addressed packet.                             |
-| `relay_archive`      | Archive a readable packet.                               |
-| `relay_search`       | Search permitted packet history without hydration.       |
-| `relay_history`      | List drafts, sent packets, open work, or closed packets. |
-| `relay_audit`        | List packet audit receipts.                              |
+| Tool                     | Purpose                                                  |
+| ------------------------ | -------------------------------------------------------- |
+| `relay_ask`              | Draft an ask packet for another teammate.                |
+| `relay_share`            | Draft a share packet from current context.               |
+| `relay_update_draft`     | Edit a draft before approval.                            |
+| `relay_send_approved`    | Approve and send an ask, share, or reply packet.         |
+| `relay_inbox`            | List packets addressed to the current member.            |
+| `relay_review`           | Mark a packet reviewed and return next actions.          |
+| `relay_hydrate_approved` | Hydrate a reviewed packet after human approval.          |
+| `relay_approve`          | Compatibility approval tool.                             |
+| `relay_reply`            | Draft a reply packet.                                    |
+| `relay_clarify`          | Request more information or evidence.                    |
+| `relay_decline`          | Decline an addressed packet.                             |
+| `relay_archive`          | Archive a readable packet.                               |
+| `relay_search`           | Search permitted packet history without hydration.       |
+| `relay_history`          | List drafts, sent packets, open work, or closed packets. |
+| `relay_audit`            | List packet audit receipts.                              |
 
 ## Links
 

@@ -2,7 +2,13 @@ import type { Command } from 'commander';
 
 import { formatDoctorHuman, runDoctorChecks } from '../setup/doctor.js';
 import type { McpClientId } from '../setup/mcp-config.js';
-import { createInviteForProfile, joinInvite, startHandoffSetup } from '../setup/orchestrator.js';
+import {
+  createInviteForProfile,
+  joinInvite,
+  leaveWorkspaceProfile,
+  removeWorkspaceMember,
+  startHandoffSetup,
+} from '../setup/orchestrator.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
 type InstallableMcpClient = Exclude<McpClientId, 'claude-code'>;
@@ -97,6 +103,27 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
     );
 
   program
+    .command('leave')
+    .description('Leave the active Handoff workspace and remove local profile credentials')
+    .option('--profile <name>', 'Profile name')
+    .option('--json', 'Print JSON output')
+    .action(async (options: CommonOptions) => {
+      const result = await leaveWorkspaceProfile({ profileName: options.profile });
+      write(io, options.json ? result : formatLeaveHuman(result), options.json);
+    });
+
+  program
+    .command('remove-member')
+    .description('Remove a teammate from the active Handoff workspace')
+    .argument('<member>', '@handle or member id to remove')
+    .option('--profile <name>', 'Profile name')
+    .option('--json', 'Print JSON output')
+    .action(async (member: string, options: CommonOptions) => {
+      const result = await removeWorkspaceMember({ member, profileName: options.profile });
+      write(io, options.json ? result : formatRemoveMemberHuman(result), options.json);
+    });
+
+  program
     .command('doctor')
     .description('Diagnose Handoff setup health')
     .option('--profile <name>', 'Profile name')
@@ -146,6 +173,9 @@ function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>)
     '',
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'start' }),
     '',
+    'Notifications:',
+    `npx -y handoff-relay watch --desktop-notifications --profile ${result.profile.profileName}`,
+    '',
     'Next:',
     result.nextCommand,
   );
@@ -184,9 +214,31 @@ function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string
     '',
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'manual' }),
     '',
+    'Notifications:',
+    `npx -y handoff-relay watch --desktop-notifications --profile ${result.profile.profileName}`,
+    '',
     'Agent prompt:',
     result.nextAgentInstruction,
   ].join('\n');
+}
+
+function formatLeaveHuman(result: Awaited<ReturnType<typeof leaveWorkspaceProfile>>): string {
+  if (!result.hadProfile) {
+    return `No active Handoff profile named "${result.profileName}". Nothing to leave.`;
+  }
+  return [
+    `Left Handoff workspace ${result.workspaceName} as @${result.handle}.`,
+    `Removed local profile credentials for "${result.profileName}".`,
+  ].join('\n');
+}
+
+function formatRemoveMemberHuman(
+  result: Awaited<ReturnType<typeof removeWorkspaceMember>>,
+): string {
+  if (result.alreadyRemoved) {
+    return `@${result.handle} is already removed from ${result.workspaceName}.`;
+  }
+  return `Removed @${result.handle} from ${result.workspaceName}.`;
 }
 
 function formatMcpSetupHuman(

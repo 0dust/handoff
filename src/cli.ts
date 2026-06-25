@@ -21,7 +21,6 @@ import {
 } from './cli/shared.js';
 import { isRelayError } from './errors.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
-import type { RelayPacket } from './protocol/schema.js';
 import { runtimeVersion } from './runtime/version.js';
 import { createBackendForProfile } from './setup/orchestrator.js';
 import { createProfileStore, resolveProfileName } from './setup/profile.js';
@@ -155,6 +154,7 @@ function parseListOption(value: string | undefined): string[] | undefined {
 
 function addAuthOptions(command: Command): Command {
   return addCommonOptions(command)
+    .option('--profile <name>', 'Profile name')
     .option('--token <token>', 'Relay member token')
     .option('--workspace <workspaceId>', 'Relay workspace id');
 }
@@ -772,32 +772,18 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         },
       });
       const watcher = createPollingWatcher({
+        ack: async (summary) => {
+          if (!summary.notification_id) return;
+          await auth.backend.ackNotification({
+            authToken: auth.authToken,
+            notificationId: summary.notification_id,
+          });
+        },
         poll: async () => {
-          const [packets, members] = await Promise.all([
-            Promise.resolve(
-              auth.backend.listInbox({
-                authToken: auth.authToken,
-                workspaceId: auth.workspaceId,
-              }),
-            ),
-            Promise.resolve(
-              auth.backend.listMembers({
-                authToken: auth.authToken,
-                workspaceId: auth.workspaceId,
-              }),
-            ),
-          ]);
-          const handlesById = new Map(
-            members.map((member: { id: string; handle: string }) => [member.id, member.handle]),
-          );
-          return packets.map((packet: RelayPacket) => ({
-            packet_id: packet.packet_id,
-            packet_type: packet.packet_type,
-            title: packet.title,
-            summary: packet.summary,
-            sender_handle: handlesById.get(packet.sender_member_id) ?? packet.sender_member_id,
-            project: packet.project.repo_name,
-          }));
+          return auth.backend.listNotifications({
+            authToken: auth.authToken,
+            workspaceId: auth.workspaceId,
+          });
         },
         notify,
         intervalMs: Number(options.interval),

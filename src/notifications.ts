@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { platform as currentPlatform } from 'node:os';
 
 export interface NotificationSummary {
+  notification_id?: string;
   packet_id: string;
   packet_type: 'ask' | 'share' | 'reply' | 'clarification';
   title: string;
@@ -120,6 +121,7 @@ export async function sendWebhookNotification(
 }
 
 export function createPollingWatcher(input: {
+  ack?: (summary: NotificationSummary) => void | Promise<void>;
   poll: () => NotificationSummary[] | Promise<NotificationSummary[]>;
   notify: (message: string, summary: NotificationSummary) => void | Promise<void>;
   intervalMs?: number;
@@ -130,9 +132,11 @@ export function createPollingWatcher(input: {
   const tick = async () => {
     const summaries = await input.poll();
     for (const summary of summaries) {
-      if (seen.has(summary.packet_id)) continue;
-      seen.add(summary.packet_id);
+      const dedupeKey = summary.notification_id ?? summary.packet_id;
+      if (seen.has(dedupeKey)) continue;
       await input.notify(formatNotification(summary), summary);
+      await input.ack?.(summary);
+      seen.add(dedupeKey);
     }
   };
 
@@ -156,6 +160,7 @@ export function createPollingWatcher(input: {
 function toWebhookPayload(summary: NotificationSummary) {
   return {
     event: 'relay.notification',
+    notification_id: summary.notification_id,
     packet_id: summary.packet_id,
     packet_type: summary.packet_type,
     sender: senderLabel(summary),

@@ -140,12 +140,15 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_update_draft`: edit a draft before sender approval.
 - `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name.
 - `relay_project_aliases`: lists workspace project/repo aliases.
-- `relay_approve`: approves and sends ask/share packets, or approves reply packets. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_send_approved`: approves and sends ask/share packets, or approves reply packets after human review. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
 - `relay_inbox`: lists packets addressed to the current member.
+- `relay_review`: records review and returns next actions before hydration.
+- `relay_hydrate_approved`: accepts when needed and hydrates a reviewed packet after human approval. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_approve`: compatibility approval tool for older agent prompts.
 - `relay_status`: fetches a readable packet.
 - `relay_view`: records a review view.
 - `relay_accept`: records recipient acceptance before hydration.
-- `relay_hydrate`: returns bounded context plus a hydration receipt. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_hydrate`: low-level hydration tool for accepted packets.
 - `relay_reply`: drafts a reply packet; returns `pending_recipient_approval`.
 - `relay_clarify`: requests more information or evidence from the sender after packet review.
 - `relay_decline`: declines an addressed packet.

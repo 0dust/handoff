@@ -27,6 +27,7 @@ import {
 } from '../protocol/schema.js';
 import { assertTransition, type ActorRole } from '../protocol/state-machine.js';
 import { scanPacketForRedactions } from '../redaction.js';
+import type { NotificationSummary } from '../notifications.js';
 import type { RelayDatabase } from '../storage/database.js';
 import { PacketRepository, type PacketRepositoryFilters } from './packet-repository.js';
 
@@ -56,6 +57,8 @@ interface InviteRow {
   handle: string;
   token: string;
   created_by_member_id: string;
+  accepted_member_id: string | null;
+  accept_idempotency_key_hash: string | null;
   expires_at: string;
   accepted_at: string | null;
   created_at: string;
@@ -69,6 +72,26 @@ interface ProjectAliasRow {
   created_by_member_id: string;
   created_at: string;
 }
+
+interface NotificationRow {
+  id: string;
+  packet_id: string;
+  workspace_id: string;
+  member_id: string;
+  status: 'unread' | 'read';
+  created_at: string;
+  read_at: string | null;
+}
+
+interface NotificationSummaryRow extends NotificationRow {
+  packet_type: RelayPacket['packet_type'];
+  title: string;
+  summary: string;
+  sender_handle: string;
+  project: string;
+}
+
+const ACCEPTED_INVITE_RETRY_WINDOW_MS = 15 * 60 * 1000;
 
 export interface CreateWorkspaceInput {
   name: string;
@@ -186,6 +209,18 @@ export interface PacketSearchResult {
   body_access: boolean;
 }
 
+export interface MemberRemovalResult {
+  member: MemberRecord;
+  alreadyRemoved: boolean;
+}
+
+export interface NotificationRecord extends NotificationSummary {
+  notification_id: string;
+  status: 'unread' | 'read';
+  created_at: string;
+  read_at?: string;
+}
+
 function rowToMember(row: MemberRow, token?: string, approvalSecret?: string): MemberRecord {
   return {
     id: row.id,
@@ -231,6 +266,21 @@ function rowToProjectAlias(row: ProjectAliasRow): ProjectAliasRecord {
     alias: row.alias,
     created_by_member_id: row.created_by_member_id,
     created_at: row.created_at,
+  };
+}
+
+function rowToNotificationRecord(row: NotificationSummaryRow): NotificationRecord {
+  return {
+    notification_id: row.id,
+    packet_id: row.packet_id,
+    packet_type: row.packet_type,
+    title: row.title,
+    summary: row.summary,
+    sender_handle: row.sender_handle,
+    project: parseJson<ProjectIdentity>(row.project).repo_name,
+    status: row.status,
+    created_at: row.created_at,
+    read_at: row.read_at ?? undefined,
   };
 }
 
@@ -357,7 +407,7 @@ export class RelayService {
     return { invite };
   }
 
-  acceptInvite(input: { inviteToken: string; displayName: string }): {
+  acceptInvite(input: { inviteToken: string; displayName: string; idempotencyKey?: string }): {
     member: MemberRecord & { token: string; approval_secret: string };
     workspace: WorkspaceRecord;
   } {
@@ -368,6 +418,22 @@ export class RelayService {
       throw relayError('NOT_FOUND', 'Invite not found.', 404);
     }
     if (inviteRow.accepted_at) {
+      const idempotencyKeyHash = input.idempotencyKey ? hashToken(input.idempotencyKey) : undefined;
+      const acceptedAt = Date.parse(inviteRow.accepted_at);
+      const retryWindowOpen =
+        Number.isFinite(acceptedAt) && Date.now() - acceptedAt <= ACCEPTED_INVITE_RETRY_WINDOW_MS;
+      if (
+        idempotencyKeyHash &&
+        inviteRow.accept_idempotency_key_hash === idempotencyKeyHash &&
+        inviteRow.accepted_member_id &&
+        retryWindowOpen
+      ) {
+        return this.reissueAcceptedInviteCredentials({
+          displayName: input.displayName,
+          memberId: inviteRow.accepted_member_id,
+          workspaceId: inviteRow.workspace_id,
+        });
+      }
       throw relayError('INVALID_INPUT', 'Invite has already been accepted.', 409);
     }
     if (Date.parse(inviteRow.expires_at) < Date.now()) {
@@ -408,11 +474,78 @@ export class RelayService {
           hashToken(approvalSecret),
           member.created_at,
         );
-      this.db.prepare('UPDATE invites SET accepted_at = ? WHERE id = ?').run(now, inviteRow.id);
+      this.db
+        .prepare(
+          `UPDATE invites
+          SET accepted_at = ?,
+              accepted_member_id = ?,
+              accept_idempotency_key_hash = ?
+          WHERE id = ?`,
+        )
+        .run(
+          now,
+          member.id,
+          input.idempotencyKey ? hashToken(input.idempotencyKey) : null,
+          inviteRow.id,
+        );
     });
     transaction();
 
     return { member, workspace };
+  }
+
+  private reissueAcceptedInviteCredentials(input: {
+    displayName: string;
+    memberId: string;
+    workspaceId: string;
+  }): {
+    member: MemberRecord & { token: string; approval_secret: string };
+    workspace: WorkspaceRecord;
+  } {
+    const existing = this.getMember(input.memberId);
+    if (existing.status === 'revoked') {
+      throw relayError('TOKEN_REVOKED', 'This member token has been revoked.', 403);
+    }
+    const token = createToken('relay_member');
+    const approvalSecret = createToken('relay_approval_secret');
+    const reissuedAt = new Date().toISOString();
+    let invalidatedApprovalTokens = 0;
+    const reissue = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE members
+          SET display_name = ?,
+              token_hash = ?,
+              approval_secret_hash = ?
+          WHERE id = ?`,
+        )
+        .run(input.displayName, hashToken(token), hashToken(approvalSecret), input.memberId);
+      const invalidated = this.db
+        .prepare(
+          `UPDATE approval_tokens
+          SET consumed_at = ?
+          WHERE actor_member_id = ?
+            AND consumed_at IS NULL`,
+        )
+        .run(reissuedAt, input.memberId);
+      invalidatedApprovalTokens = invalidated.changes;
+      this.recordAudit({
+        action: 'reissue_invite_credentials',
+        actorMemberId: input.memberId,
+        workspaceId: input.workspaceId,
+        metadata: { invalidated_approval_tokens: invalidatedApprovalTokens },
+      });
+    });
+    reissue();
+    return {
+      member: {
+        ...existing,
+        display_name: input.displayName,
+        token,
+        approval_secret: approvalSecret,
+      },
+      workspace: this.getWorkspace(input.workspaceId),
+    };
   }
 
   getInvite(input: { inviteToken: string }): { invite: InviteRecord; workspace: WorkspaceRecord } {
@@ -491,28 +624,96 @@ export class RelayService {
     ).map((row) => rowToProjectAlias(row));
   }
 
-  revokeMember(input: { adminToken: string; workspaceId: string; memberId: string }): {
-    member: MemberRecord;
-  } {
+  revokeMember(input: {
+    adminToken: string;
+    workspaceId: string;
+    memberId: string;
+  }): MemberRemovalResult {
+    return this.removeMember({
+      adminToken: input.adminToken,
+      workspaceId: input.workspaceId,
+      member: input.memberId,
+    });
+  }
+
+  removeMember(input: {
+    adminToken: string;
+    workspaceId: string;
+    member: string;
+  }): MemberRemovalResult {
     const admin = this.requireAdmin(input.adminToken, input.workspaceId);
-    if (admin.id === input.memberId) {
-      throw relayError('INVALID_INPUT', 'Admins cannot revoke themselves.', 400);
+    const member = this.resolveWorkspaceMember(input.workspaceId, input.member);
+    if (admin.id === member.id) {
+      throw relayError('INVALID_INPUT', 'Admins cannot remove themselves.', 400);
     }
-    const member = this.getMember(input.memberId);
     if (member.workspace_id !== input.workspaceId) {
       throw relayError('FORBIDDEN', 'Member belongs to a different workspace.', 403);
     }
-    const revokedAt = new Date().toISOString();
-    this.db
-      .prepare('UPDATE members SET status = ?, revoked_at = ? WHERE id = ?')
-      .run('revoked', revokedAt, input.memberId);
-    this.recordAudit({
+    return this.markMemberRemoved({
       action: 'revoke',
       actorMemberId: admin.id,
+      member,
+      metadata: { revoked_member_id: member.id },
       workspaceId: input.workspaceId,
-      metadata: { revoked_member_id: input.memberId },
     });
-    return { member: { ...member, status: 'revoked', revoked_at: revokedAt } };
+  }
+
+  leaveWorkspace(input: { authToken: string; workspaceId: string }): MemberRemovalResult {
+    const member = this.authenticate(input.authToken, { allowRevoked: true });
+    if (member.workspace_id !== input.workspaceId) {
+      throw relayError('FORBIDDEN', 'Token belongs to a different workspace.', 403);
+    }
+    if (member.role === 'admin') {
+      throw relayError(
+        'INVALID_INPUT',
+        'Workspace admins cannot leave their own workspace. Remove member profiles with `handoff remove-member <handle>` or create a separate member profile.',
+        400,
+      );
+    }
+    return this.markMemberRemoved({
+      action: 'leave',
+      actorMemberId: member.id,
+      member,
+      metadata: { left_member_id: member.id },
+      workspaceId: input.workspaceId,
+    });
+  }
+
+  private markMemberRemoved(input: {
+    action: 'leave' | 'revoke';
+    actorMemberId: string;
+    member: MemberRecord;
+    metadata: Record<string, unknown>;
+    workspaceId: string;
+  }): MemberRemovalResult {
+    if (input.member.status === 'revoked') {
+      return { member: input.member, alreadyRemoved: true };
+    }
+    const revokedAt = new Date().toISOString();
+    const deactivate = this.db.transaction(() => {
+      this.db
+        .prepare('UPDATE members SET status = ?, revoked_at = ? WHERE id = ?')
+        .run('revoked', revokedAt, input.member.id);
+      this.db
+        .prepare(
+          `UPDATE approval_tokens
+          SET consumed_at = ?
+          WHERE actor_member_id = ?
+            AND consumed_at IS NULL`,
+        )
+        .run(revokedAt, input.member.id);
+    });
+    deactivate();
+    this.recordAudit({
+      action: input.action,
+      actorMemberId: input.actorMemberId,
+      workspaceId: input.workspaceId,
+      metadata: input.metadata,
+    });
+    return {
+      member: { ...input.member, status: 'revoked', revoked_at: revokedAt },
+      alreadyRemoved: false,
+    };
   }
 
   rotateMemberToken(input: { authToken: string }): { member: MemberRecord; token: string } {
@@ -747,6 +948,83 @@ export class RelayService {
       );
   }
 
+  listNotifications(input: { authToken: string; workspaceId: string }): NotificationRecord[] {
+    const member = this.requireMember(input.authToken, input.workspaceId);
+    return (
+      this.db
+        .prepare(
+          `SELECT
+            notifications.id,
+            notifications.packet_id,
+            notifications.workspace_id,
+            notifications.member_id,
+            notifications.status,
+            notifications.created_at,
+            notifications.read_at,
+            packets.packet_type,
+            packets.title,
+            packets.summary,
+            packets.project,
+            members.handle AS sender_handle
+          FROM notifications
+          JOIN packets ON packets.id = notifications.packet_id
+          JOIN members ON members.id = packets.sender_member_id
+          WHERE notifications.workspace_id = ?
+            AND notifications.member_id = ?
+            AND notifications.status = 'unread'
+          ORDER BY notifications.created_at ASC`,
+        )
+        .all(input.workspaceId, member.id) as NotificationSummaryRow[]
+    ).map((row) => rowToNotificationRecord(row));
+  }
+
+  ackNotification(input: { authToken: string; notificationId: string }): {
+    notification: NotificationRecord;
+  } {
+    const member = this.authenticate(input.authToken);
+    const row = this.db
+      .prepare(
+        `SELECT
+          notifications.id,
+          notifications.packet_id,
+          notifications.workspace_id,
+          notifications.member_id,
+          notifications.status,
+          notifications.created_at,
+          notifications.read_at,
+          packets.packet_type,
+          packets.title,
+          packets.summary,
+          packets.project,
+          members.handle AS sender_handle
+        FROM notifications
+        JOIN packets ON packets.id = notifications.packet_id
+        JOIN members ON members.id = packets.sender_member_id
+        WHERE notifications.id = ?`,
+      )
+      .get(input.notificationId) as NotificationSummaryRow | undefined;
+    if (!row) {
+      throw relayError('NOT_FOUND', 'Notification not found.', 404);
+    }
+    if (row.member_id !== member.id) {
+      throw relayError('FORBIDDEN', 'Notification belongs to a different member.', 403);
+    }
+    if (row.status === 'read') {
+      return { notification: rowToNotificationRecord(row) };
+    }
+    const readAt = new Date().toISOString();
+    this.db
+      .prepare('UPDATE notifications SET status = ?, read_at = ? WHERE id = ?')
+      .run('read', readAt, input.notificationId);
+    return {
+      notification: rowToNotificationRecord({
+        ...row,
+        status: 'read',
+        read_at: readAt,
+      }),
+    };
+  }
+
   viewPacket(input: { authToken: string; packetId: string }): PacketResult {
     const actor = this.authenticate(input.authToken);
     let packet = this.getPacket(input.packetId);
@@ -754,6 +1032,9 @@ export class RelayService {
     const role = this.actorRole(actor, packet);
     if (role === 'recipient' && (packet.status === 'delivered' || packet.status === 'replied')) {
       packet = this.transitionPacket(packet, 'viewed', actor, 'recipient');
+    }
+    if (role === 'recipient') {
+      this.markNotificationRead(packet.packet_id, actor.id);
     }
     this.recordAudit({
       action: 'view',
@@ -777,6 +1058,7 @@ export class RelayService {
     const packet = this.getPacket(input.packetId);
     this.requireRecipient(actor, packet);
     const accepted = this.transitionPacket(packet, 'accepted', actor, 'recipient');
+    this.markNotificationRead(packet.packet_id, actor.id);
     this.recordAudit({
       action: 'accept',
       actorMemberId: actor.id,
@@ -805,6 +1087,7 @@ export class RelayService {
     });
     const targetStatus = 'hydrated';
     packet = this.transitionPacket(packet, targetStatus, actor, 'recipient');
+    this.markNotificationRead(packet.packet_id, actor.id);
     const hydration = formatHydrationContext(packet, {
       hydratedBy: actor.id,
       client: input.client,
@@ -931,6 +1214,7 @@ export class RelayService {
     const packet = this.getPacket(input.packetId);
     this.requireRecipient(actor, packet);
     const declined = this.transitionPacket(packet, 'declined', actor, 'recipient');
+    this.markNotificationRead(packet.packet_id, actor.id);
     this.recordAudit({
       action: 'decline',
       actorMemberId: actor.id,
@@ -952,6 +1236,9 @@ export class RelayService {
       actor,
       role === 'admin' ? 'admin' : role,
     );
+    if (role === 'recipient') {
+      this.markNotificationRead(packet.packet_id, actor.id);
+    }
     this.recordAudit({
       action: 'archive',
       actorMemberId: actor.id,
@@ -972,6 +1259,7 @@ export class RelayService {
     let original = this.getPacket(input.packetId);
     this.requireRecipient(actor, original);
     original = this.transitionPacket(original, 'clarification_requested', actor, 'recipient');
+    this.markNotificationRead(original.packet_id, actor.id);
     this.recordAudit({
       action: 'clarify',
       actorMemberId: actor.id,
@@ -1197,7 +1485,7 @@ export class RelayService {
     return prepared;
   }
 
-  private authenticate(token: string): MemberRecord {
+  private authenticate(token: string, input: { allowRevoked?: boolean } = {}): MemberRecord {
     if (!token) {
       throw relayError('AUTH_REQUIRED', 'Missing Relay auth token.', 401);
     }
@@ -1208,7 +1496,7 @@ export class RelayService {
       throw relayError('AUTH_REQUIRED', 'Invalid Relay auth token.', 401);
     }
     const member = rowToMember(row);
-    if (member.status === 'revoked') {
+    if (member.status === 'revoked' && !input.allowRevoked) {
       throw relayError('TOKEN_REVOKED', 'This member token has been revoked.', 403);
     }
     return member;
@@ -1264,6 +1552,23 @@ export class RelayService {
       throw relayError('NOT_FOUND', 'Member not found.', 404);
     }
     return rowToMember(row);
+  }
+
+  private resolveWorkspaceMember(workspaceId: string, member: string): MemberRecord {
+    const trimmed = member.trim();
+    if (!trimmed) {
+      throw relayError('INVALID_INPUT', 'Member handle or id is required.', 400);
+    }
+    if (trimmed.startsWith('mem_')) {
+      return this.getMember(trimmed);
+    }
+    const byHandle = this.findMemberByHandle(workspaceId, trimmed, true);
+    if (byHandle) return byHandle;
+    try {
+      return this.getMember(trimmed);
+    } catch {
+      throw relayError('NOT_FOUND', `Member ${trimmed} not found.`, 404);
+    }
   }
 
   private findMemberByHandle(
@@ -1547,7 +1852,7 @@ export class RelayService {
   private createNotification(packet: RelayPacket, memberId: string): void {
     this.db
       .prepare(
-        `INSERT INTO notifications (id, packet_id, workspace_id, member_id, status, created_at)
+        `INSERT OR IGNORE INTO notifications (id, packet_id, workspace_id, member_id, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
@@ -1558,6 +1863,19 @@ export class RelayService {
         'unread',
         new Date().toISOString(),
       );
+  }
+
+  private markNotificationRead(packetId: string, memberId: string): void {
+    this.db
+      .prepare(
+        `UPDATE notifications
+        SET status = 'read',
+            read_at = COALESCE(read_at, ?)
+        WHERE packet_id = ?
+          AND member_id = ?
+          AND status = 'unread'`,
+      )
+      .run(new Date().toISOString(), packetId, memberId);
   }
 
   private recordAudit(input: {

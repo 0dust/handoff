@@ -583,6 +583,147 @@ describe('MCP tool contracts', () => {
     expect(hydrateTool?.inputSchema.approvalSecret).toBeUndefined();
   });
 
+  test('MCP shortcut tools make sender and recipient workflows explicit without skipping review', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Shortcut Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    const senderTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: workspace.admin.approval_secret,
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const recipientTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: alice.member.approval_secret,
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const shareTool = senderTools.find((tool) => tool.name === 'relay_share');
+    const sendApprovedTool = senderTools.find((tool) => tool.name === 'relay_send_approved');
+    const reviewTool = recipientTools.find((tool) => tool.name === 'relay_review');
+    const hydrateApprovedTool = recipientTools.find(
+      (tool) => tool.name === 'relay_hydrate_approved',
+    );
+
+    expect(sendApprovedTool?.description).toContain('Sender step 2');
+    expect(reviewTool?.description).toContain('Recipient step 2');
+    expect(hydrateApprovedTool?.description).toContain('Recipient step 3');
+
+    const draft = await shareTool?.handler({
+      to: '@alice',
+      finding: 'The refresh retry path skips persistence.',
+      title: 'Shortcut handoff',
+      summary: 'Use the shortcut flow after human review.',
+      sourceClient: 'codex',
+    });
+    const sent = await sendApprovedTool?.handler({ packetId: draft.id });
+
+    await expect(
+      hydrateApprovedTool?.handler({ packetId: draft.id, client: 'codex' }),
+    ).rejects.toThrow(/review/i);
+    const reviewed = await reviewTool?.handler({ packetId: draft.id });
+    const hydrated = await hydrateApprovedTool?.handler({ packetId: draft.id, client: 'codex' });
+
+    expect(sent.packet.status).toBe('delivered');
+    expect(reviewed.packet.status).toBe('viewed');
+    expect(reviewed.next_actions).toEqual(
+      expect.arrayContaining([expect.stringContaining('relay_hydrate_approved')]),
+    );
+    expect(hydrated.packet.status).toBe('hydrated');
+    expect(hydrated.context).toContain('refresh retry path');
+  });
+
+  test('MCP hydrate shortcut requires review for reply packets and hydrates without accept', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Reply Shortcut Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    const senderTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: workspace.admin.approval_secret,
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const recipientTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: alice.member.approval_secret,
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const askTool = senderTools.find((tool) => tool.name === 'relay_ask');
+    const senderSendApprovedTool = senderTools.find((tool) => tool.name === 'relay_send_approved');
+    const recipientReviewTool = recipientTools.find((tool) => tool.name === 'relay_review');
+    const recipientHydrateApprovedTool = recipientTools.find(
+      (tool) => tool.name === 'relay_hydrate_approved',
+    );
+    const replyTool = recipientTools.find((tool) => tool.name === 'relay_reply');
+    const recipientSendApprovedTool = recipientTools.find(
+      (tool) => tool.name === 'relay_send_approved',
+    );
+    const senderReviewTool = senderTools.find((tool) => tool.name === 'relay_review');
+    const senderHydrateApprovedTool = senderTools.find(
+      (tool) => tool.name === 'relay_hydrate_approved',
+    );
+
+    const draft = await askTool?.handler({
+      to: '@alice',
+      question: 'Can you inspect auth refresh?',
+      title: 'Reply shortcut',
+      summary: 'Need recipient context and reply.',
+      sourceClient: 'codex',
+    });
+    await senderSendApprovedTool?.handler({ packetId: draft.id });
+    await recipientReviewTool?.handler({ packetId: draft.id });
+    await recipientHydrateApprovedTool?.handler({ packetId: draft.id, client: 'codex' });
+    const reply = await replyTool?.handler({
+      packetId: draft.id,
+      answer: 'Persist the rotated token before retrying.',
+      summary: 'Persistence order issue.',
+      sourceClient: 'codex',
+    });
+    const approvedReply = await recipientSendApprovedTool?.handler({ packetId: reply.id });
+
+    await expect(
+      senderHydrateApprovedTool?.handler({ packetId: reply.id, client: 'codex' }),
+    ).rejects.toThrow(/review/i);
+    const reviewedReply = await senderReviewTool?.handler({ packetId: reply.id });
+    const hydratedReply = await senderHydrateApprovedTool?.handler({
+      packetId: reply.id,
+      client: 'codex',
+    });
+
+    expect(approvedReply.packet.status).toBe('replied');
+    expect(reviewedReply.packet.status).toBe('viewed');
+    expect(hydratedReply.packet.status).toBe('hydrated');
+    expect(hydratedReply.context).toContain('Persist the rotated token');
+  });
+
   test('agent-confirmed MCP approval cannot override redaction blocks without a manual token', async () => {
     const { service } = createService();
     const workspace = service.createWorkspace({
@@ -936,6 +1077,77 @@ describe('CLI and watcher', () => {
     ]);
   });
 
+  test('polling watcher retries when notification delivery fails before ack', async () => {
+    const notifications: string[] = [];
+    let attempts = 0;
+    let acked = 0;
+    const watcher = createPollingWatcher({
+      poll: () => [
+        {
+          notification_id: 'ntf_1',
+          packet_id: 'pkt_1',
+          packet_type: 'ask',
+          title: 'Auth refresh',
+          summary: 'Refresh returns 401.',
+          sender_handle: 'sam',
+          project: 'project-api',
+        },
+      ],
+      notify: (message) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('desktop notification failed');
+        }
+        notifications.push(message);
+      },
+      ack: () => {
+        acked += 1;
+      },
+    });
+
+    await expect(watcher.tick()).rejects.toThrow(/desktop notification failed/);
+    await watcher.tick();
+
+    expect(attempts).toBe(2);
+    expect(acked).toBe(1);
+    expect(notifications).toEqual([
+      '@sam is asking for help on Auth refresh in project-api. Review packet?',
+    ]);
+  });
+
+  test('polling watcher retries when ack fails after local delivery', async () => {
+    let attempts = 0;
+    let ackAttempts = 0;
+    const watcher = createPollingWatcher({
+      poll: () => [
+        {
+          notification_id: 'ntf_1',
+          packet_id: 'pkt_1',
+          packet_type: 'share',
+          title: 'Auth finding',
+          summary: 'Refresh persistence ordering.',
+          sender_handle: 'sam',
+          project: 'project-api',
+        },
+      ],
+      notify: () => {
+        attempts += 1;
+      },
+      ack: () => {
+        ackAttempts += 1;
+        if (ackAttempts === 1) {
+          throw new Error('ack failed');
+        }
+      },
+    });
+
+    await expect(watcher.tick()).rejects.toThrow(/ack failed/);
+    await watcher.tick();
+
+    expect(attempts).toBe(2);
+    expect(ackAttempts).toBe(2);
+  });
+
   test('notification dispatcher can send terminal, desktop-native, and webhook notifications', async () => {
     const terminal: string[] = [];
     const nativeCalls: Array<{ command: string; args: string[] }> = [];
@@ -1049,10 +1261,27 @@ describe('CLI and watcher', () => {
       expect(webhook.deliveries).toHaveLength(1);
       expect(webhook.deliveries[0].body).toMatchObject({
         event: 'relay.notification',
+        notification_id: expect.stringMatching(/^ntf_/),
         packet_id: draft.id,
         title: 'Auth refresh',
         project: 'unknown-project',
       });
+
+      const repeatedWatch = await runCli([
+        'watch',
+        '--server-url',
+        serverUrl,
+        '--token',
+        alice.member.token,
+        '--workspace',
+        workspace.workspace.id,
+        '--webhook-url',
+        webhook.url,
+        '--once',
+      ]);
+
+      expect(repeatedWatch.stderr).not.toContain('@sam is asking for help');
+      expect(webhook.deliveries).toHaveLength(1);
     } finally {
       await app.close();
       await webhook.close();

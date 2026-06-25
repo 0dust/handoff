@@ -35,11 +35,15 @@ export class RelayApiClient {
     });
   }
 
-  async acceptInvite(input: { inviteToken: string; displayName: string }) {
+  async acceptInvite(input: { inviteToken: string; displayName: string; idempotencyKey?: string }) {
     return this.request(`/invites/${input.inviteToken}/accept`, {
       method: 'POST',
-      body: { displayName: input.displayName },
+      body: { displayName: input.displayName, idempotencyKey: input.idempotencyKey },
     });
+  }
+
+  async getInvite(input: { inviteToken: string }) {
+    return this.request(`/invites/${input.inviteToken}`);
   }
 
   async listMembers(input: { authToken: string; workspaceId: string }) {
@@ -71,6 +75,22 @@ export class RelayApiClient {
     return this.request(`/members/${input.memberId}/revoke`, {
       method: 'POST',
       token: input.adminToken,
+      body: { workspaceId: input.workspaceId },
+    });
+  }
+
+  async removeMember(input: { adminToken: string; workspaceId: string; member: string }) {
+    return this.request('/members/remove', {
+      method: 'POST',
+      token: input.adminToken,
+      body: { workspaceId: input.workspaceId, member: input.member },
+    });
+  }
+
+  async leaveWorkspace(input: { authToken: string; workspaceId: string }) {
+    return this.request('/members/me/leave', {
+      method: 'POST',
+      token: input.authToken,
       body: { workspaceId: input.workspaceId },
     });
   }
@@ -145,6 +165,19 @@ export class RelayApiClient {
 
   async listInbox(input: { authToken: string; workspaceId: string }) {
     return this.request(`/inbox?workspaceId=${encodeURIComponent(input.workspaceId)}`, {
+      token: input.authToken,
+    });
+  }
+
+  async listNotifications(input: { authToken: string; workspaceId: string }) {
+    return this.request(`/notifications?workspaceId=${encodeURIComponent(input.workspaceId)}`, {
+      token: input.authToken,
+    });
+  }
+
+  async ackNotification(input: { authToken: string; notificationId: string }) {
+    return this.request(`/notifications/${input.notificationId}/ack`, {
+      method: 'POST',
       token: input.authToken,
     });
   }

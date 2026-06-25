@@ -9,14 +9,14 @@ On Sam's machine, host a LAN-reachable workspace:
 ```bash
 npx -y handoff-relay start --lan
 npx -y handoff-relay invite alice
-npx -y handoff-relay doctor
+npx -y handoff-relay watch --desktop-notifications
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
 npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
-npx -y handoff-relay doctor
+npx -y handoff-relay watch --desktop-notifications
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the profile-backed MCP command for her Claude Code config.
@@ -66,10 +66,11 @@ Ask Claude to create a handoff packet, then review the returned draft before app
 ```text
 Use Handoff to create a Relay Packet for @alice from this session.
 Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Draft only. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
+Draft with relay_share or relay_ask. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
+If I approve, call relay_send_approved.
 ```
 
-In strict mode, before Claude calls `relay_approve`, generate a human approval token in a terminal:
+In strict mode, before Claude calls `relay_send_approved`, generate a human approval token in a terminal:
 
 ```bash
 npx -y handoff-relay approval-token <packet-id> --action send
@@ -78,8 +79,9 @@ npx -y handoff-relay approval-token <packet-id> --action send
 Recipient side:
 
 ```text
-Check my Handoff inbox. Show me the Relay Packet before hydration.
-If I approve, hydrate it into this Claude Code session.
+Check my Handoff inbox.
+Call relay_review on the packet and show me the Relay Packet before hydration.
+If I approve, call relay_hydrate_approved.
 ```
 
 Hydration also needs a human approval token:
@@ -96,7 +98,7 @@ For a smoother local workflow, profile-backed MCP can opt into agent-confirmed a
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-With that flag, Claude may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Claude config and tool schemas.
+With that flag, Claude may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Claude config and tool schemas.
 
 ## Remote Or Self-Hosted
 

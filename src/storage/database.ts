@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS invites (
   handle TEXT NOT NULL,
   token TEXT NOT NULL UNIQUE,
   created_by_member_id TEXT NOT NULL,
+  accepted_member_id TEXT,
+  accept_idempotency_key_hash TEXT,
   expires_at TEXT NOT NULL,
   accepted_at TEXT,
   created_at TEXT NOT NULL,
@@ -96,6 +98,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at TEXT
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_packet_member_idx ON notifications(packet_id, member_id);
+
 CREATE TABLE IF NOT EXISTS approval_tokens (
   id TEXT PRIMARY KEY,
   packet_id TEXT NOT NULL,
@@ -120,6 +124,8 @@ export function createRelayDatabase(path = ':memory:'): RelayDatabase {
   db.pragma('foreign_keys = ON');
   db.exec(schema);
   ensureColumn(db, 'members', 'approval_secret_hash', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'invites', 'accepted_member_id', 'TEXT');
+  ensureColumn(db, 'invites', 'accept_idempotency_key_hash', 'TEXT');
   return db;
 }
 

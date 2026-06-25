@@ -77,11 +77,32 @@ export function getMcpToolDefinitions(
   if (!agentApprovals) {
     approveInputSchema.allowSecretOverride = z.boolean().optional();
   }
+  const approveAndSendHandler = async (args: any) => {
+    if (agentApprovals && !args.approvalToken && args.allowSecretOverride) {
+      throw new Error(
+        'Redaction overrides require a manually generated approval token; agent-confirmed approvals cannot override blocked content.',
+      );
+    }
+    const approvalToken = await resolveMcpApprovalToken({
+      action: async () => {
+        const result = await service.getPacketForMember({
+          authToken: args.authToken,
+          packetId: args.packetId,
+        });
+        return result.packet.packet_type === 'reply' ? 'reply' : 'send';
+      },
+      args,
+      approvalSecret: agentApprovalSecret,
+      service,
+      useAgentApprovals: agentApprovals,
+    });
+    return service.approveAndSend({ ...args, approvalToken });
+  };
   const tools: McpToolDefinition[] = [
     {
       name: 'relay_ask',
       description:
-        'Draft a human-reviewed ask packet for a teammate. Does not send until relay_approve.',
+        'Sender step 1/2: draft a human-reviewed ask packet for a teammate. Show the returned packet and redaction_report to the human, then send with relay_send_approved or relay_approve.',
       inputSchema: {
         authToken: z.string(),
         workspaceId: z.string(),
@@ -109,7 +130,7 @@ export function getMcpToolDefinitions(
     {
       name: 'relay_share',
       description:
-        'Draft a human-reviewed share packet for a teammate. Does not send until relay_approve.',
+        'Sender step 1/2: draft a human-reviewed share packet for a teammate. Show the returned packet and redaction_report to the human, then send with relay_send_approved or relay_approve.',
       inputSchema: {
         authToken: z.string(),
         workspaceId: z.string(),
@@ -179,33 +200,21 @@ export function getMcpToolDefinitions(
     {
       name: 'relay_approve',
       description:
-        'Approve and send a drafted ask/share packet or approve a reply packet after human review.',
+        'Compatibility approval tool: send a drafted ask/share packet or approve a reply packet after human review. Prefer relay_send_approved for new sender flows.',
       inputSchema: approveInputSchema,
-      handler: async (args) => {
-        if (agentApprovals && !args.approvalToken && args.allowSecretOverride) {
-          throw new Error(
-            'Redaction overrides require a manually generated approval token; agent-confirmed approvals cannot override blocked content.',
-          );
-        }
-        const approvalToken = await resolveMcpApprovalToken({
-          action: async () => {
-            const result = await service.getPacketForMember({
-              authToken: args.authToken,
-              packetId: args.packetId,
-            });
-            return result.packet.packet_type === 'reply' ? 'reply' : 'send';
-          },
-          args,
-          approvalSecret: agentApprovalSecret,
-          service,
-          useAgentApprovals: agentApprovals,
-        });
-        return service.approveAndSend({ ...args, approvalToken });
-      },
+      handler: approveAndSendHandler,
+    },
+    {
+      name: 'relay_send_approved',
+      description:
+        'Sender step 2/2: after the human reviews the draft packet and redaction_report, approve and send it. Also approves reply packets after human review.',
+      inputSchema: approveInputSchema,
+      handler: approveAndSendHandler,
     },
     {
       name: 'relay_inbox',
-      description: 'List packets addressed to the current member.',
+      description:
+        'Recipient step 1/3: list packets addressed to the current member. Pick a packet and call relay_review before accepting or hydrating it.',
       inputSchema: {
         authToken: z.string(),
         workspaceId: z.string(),
@@ -214,7 +223,8 @@ export function getMcpToolDefinitions(
     },
     {
       name: 'relay_status',
-      description: 'Get a packet if the current member is allowed to read it.',
+      description:
+        'Inspect a readable packet without changing workflow state. For recipient review, prefer relay_review so delivered packets are marked viewed before hydration.',
       inputSchema: {
         authToken: z.string(),
         packetId: z.string(),
@@ -223,7 +233,8 @@ export function getMcpToolDefinitions(
     },
     {
       name: 'relay_view',
-      description: 'Record a packet view and return the packet for review.',
+      description:
+        'Recipient review primitive: mark an addressed delivered/replied packet as viewed and return it for human review. Prefer relay_review for next-action guidance.',
       inputSchema: {
         authToken: z.string(),
         packetId: z.string(),
@@ -232,7 +243,8 @@ export function getMcpToolDefinitions(
     },
     {
       name: 'relay_accept',
-      description: 'Accept a reviewed packet before hydration.',
+      description:
+        'Accept a reviewed ask/share packet before hydration. New recipient flows can use relay_hydrate_approved after relay_review.',
       inputSchema: {
         authToken: z.string(),
         packetId: z.string(),
@@ -242,7 +254,7 @@ export function getMcpToolDefinitions(
     {
       name: 'relay_hydrate',
       description:
-        'Hydrate an accepted packet into agent context after human review and record a hydration receipt.',
+        'Hydrate an accepted packet into agent context after human review and record a hydration receipt. Recipient happy path: relay_review, show packet to human, then relay_hydrate_approved.',
       inputSchema: {
         authToken: z.string(),
         packetId: z.string(),
@@ -251,6 +263,69 @@ export function getMcpToolDefinitions(
         approvalToken: approvalTokenInput,
       },
       handler: async (args) => {
+        const approvalToken = await resolveMcpApprovalToken({
+          action: 'hydrate',
+          args,
+          approvalSecret: agentApprovalSecret,
+          service,
+          useAgentApprovals: agentApprovals,
+        });
+        return service.hydratePacket({ ...args, approvalToken });
+      },
+    },
+    {
+      name: 'relay_review',
+      description:
+        'Recipient step 2/3: mark a packet viewed and return the full packet plus next actions. Show the packet to the human before calling relay_hydrate_approved.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+      },
+      handler: async (args) => {
+        const result = await service.viewPacket(args);
+        return {
+          ...result,
+          next_actions: [
+            'Show this packet and redaction_report to the human.',
+            'If approved, call relay_hydrate_approved with this packetId.',
+            'If more context is needed, call relay_clarify.',
+            'If the packet should not be used, call relay_decline.',
+          ],
+        };
+      },
+    },
+    {
+      name: 'relay_hydrate_approved',
+      description:
+        'Recipient step 3/3: after relay_review and explicit human approval, accept if needed and hydrate the reviewed packet. Refuses untouched delivered/replied packets.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string(),
+        client: z.string().default('generic'),
+        sessionId: z.string().optional(),
+        approvalToken: approvalTokenInput,
+      },
+      handler: async (args) => {
+        let result = await service.getPacketForMember({
+          authToken: args.authToken,
+          packetId: args.packetId,
+        });
+        if (result.packet.status === 'delivered' || result.packet.status === 'replied') {
+          throw new Error(
+            'Review this packet first with relay_review, show it to the human, then call relay_hydrate_approved.',
+          );
+        }
+        if (result.packet.status === 'viewed' && result.packet.packet_type !== 'reply') {
+          result = await service.acceptPacket({
+            authToken: args.authToken,
+            packetId: args.packetId,
+          });
+        }
+        if (result.packet.packet_type !== 'reply' && result.packet.status !== 'accepted') {
+          throw new Error(
+            `Packet must be reviewed and accepted before hydration. Current status: ${result.packet.status}.`,
+          );
+        }
         const approvalToken = await resolveMcpApprovalToken({
           action: 'hydrate',
           args,

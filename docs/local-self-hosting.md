@@ -159,7 +159,7 @@ npx -y handoff-relay watch \
   --webhook-header "Authorization: Bearer <token>"
 ```
 
-The watcher always uses polling. Terminal, desktop, and webhook notifications include sender handle, packet type, title, project, summary, and the open/review action, but never evidence bodies or raw transcripts. For scripts or tests, use `--once` to poll a single time and exit.
+The watcher polls Handoff's durable notification queue. A notification is acknowledged after local delivery, so restarting the watcher does not re-send already delivered packet notifications. Terminal, desktop, and webhook notifications include sender handle, packet type, title, project, summary, notification id, and the open/review action, but never evidence bodies or raw transcripts. For scripts or tests, use `--once` to poll a single time and exit.
 
 ## From A Local Checkout
 
