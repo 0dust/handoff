@@ -1,6 +1,10 @@
 import type { Command } from 'commander';
 
 import { formatDoctorHuman, runDoctorChecks } from '../setup/doctor.js';
+import {
+  startBackgroundNotificationWatcher,
+  type BackgroundNotificationWatcherMetadata,
+} from '../notification-watch-lifecycle.js';
 import type { McpClientId } from '../setup/mcp-config.js';
 import {
   createInviteForProfile,
@@ -9,12 +13,27 @@ import {
   removeWorkspaceMember,
   startHandoffSetup,
 } from '../setup/orchestrator.js';
+import { createProfileStore } from '../setup/profile.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
 type InstallableMcpClient = McpClientId;
+type StartNotificationWatcher = typeof startBackgroundNotificationWatcher;
+type NotificationWatcherStartResult = Awaited<ReturnType<StartNotificationWatcher>>;
 
-export function registerSetupCommands(program: Command, input: { io: CliIo }): void {
-  const { io } = input;
+export interface SetupCommandOptions {
+  io: CliIo;
+  startNotificationWatcher?: StartNotificationWatcher;
+}
+
+interface SetupNotificationWatcherResult {
+  error?: string;
+  metadata?: BackgroundNotificationWatcherMetadata;
+  profileName: string;
+  status: NotificationWatcherStartResult['status'] | 'failed';
+}
+
+export function registerSetupCommands(program: Command, input: SetupCommandOptions): void {
+  const { io, startNotificationWatcher = startBackgroundNotificationWatcher } = input;
   program
     .command('start')
     .description('Create or reuse a frictionless Handoff profile and local server')
@@ -71,9 +90,15 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
             }),
           );
         }
+        const notifications = await startSetupNotificationWatcher({
+          profileName: result.profile.profileName,
+          startNotificationWatcher,
+        });
         write(
           io,
-          options.json ? startOutput(result, invites) : formatStartHuman(result, invites),
+          options.json
+            ? startOutput(result, invites, notifications)
+            : formatStartHuman(result, invites, notifications),
           options.json,
         );
       },
@@ -118,7 +143,15 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
           profileName: options.profile,
           serverUrl: options.serverUrl,
         });
-        write(io, options.json ? joinOutput(result) : formatJoinHuman(result), options.json);
+        const notifications = await startSetupNotificationWatcher({
+          profileName: result.profile.profileName,
+          startNotificationWatcher,
+        });
+        write(
+          io,
+          options.json ? joinOutput(result, notifications) : formatJoinHuman(result, notifications),
+          options.json,
+        );
       },
     );
 
@@ -168,9 +201,37 @@ function collectOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
+async function startSetupNotificationWatcher(input: {
+  profileName: string;
+  startNotificationWatcher: StartNotificationWatcher;
+}): Promise<SetupNotificationWatcherResult> {
+  const store = createProfileStore();
+  store.ensureHome();
+  try {
+    const result = await input.startNotificationWatcher({
+      desktopNotifications: true,
+      home: store.home,
+      intervalMs: 5000,
+      profileName: input.profileName,
+    });
+    return {
+      metadata: result.metadata,
+      profileName: input.profileName,
+      status: result.status,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+      profileName: input.profileName,
+      status: 'failed',
+    };
+  }
+}
+
 function startOutput(
   result: Awaited<ReturnType<typeof startHandoffSetup>>,
   invites: Array<Awaited<ReturnType<typeof createInviteForProfile>>> = [],
+  notifications: SetupNotificationWatcherResult,
 ) {
   return {
     profile: result.profile.profileName,
@@ -180,6 +241,7 @@ function startOutput(
     publicInviteBaseUrl: result.profile.publicInviteBaseUrl,
     serverStatus: result.server.status,
     mcp: result.mcp,
+    notifications,
     invites,
     nextCommand: result.nextCommand,
     warning: result.server.warning,
@@ -189,6 +251,7 @@ function startOutput(
 function formatStartHuman(
   result: Awaited<ReturnType<typeof startHandoffSetup>>,
   invites: Array<Awaited<ReturnType<typeof createInviteForProfile>>> = [],
+  notifications: SetupNotificationWatcherResult,
 ): string {
   const lines = [
     result.created ? 'Handoff setup created.' : 'Handoff setup is ready.',
@@ -207,8 +270,7 @@ function formatStartHuman(
     '',
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'start' }),
     '',
-    'Notifications:',
-    `npx -y handoff-relay watch --profile ${result.profile.profileName} --background`,
+    ...formatNotificationSetupHuman(notifications),
   );
   if (invites.length) {
     lines.push('', 'Invites:');
@@ -235,18 +297,25 @@ function formatInviteHuman(result: Awaited<ReturnType<typeof createInviteForProf
   return lines.join('\n');
 }
 
-function joinOutput(result: Awaited<ReturnType<typeof joinInvite>>) {
+function joinOutput(
+  result: Awaited<ReturnType<typeof joinInvite>>,
+  notifications: SetupNotificationWatcherResult,
+) {
   return {
     profile: result.profile.profileName,
     handle: result.profile.handle,
     workspaceName: result.profile.workspaceName,
     serverUrl: result.profile.serverUrl,
     mcp: result.mcp,
+    notifications,
     nextAgentInstruction: result.nextAgentInstruction,
   };
 }
 
-function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string {
+function formatJoinHuman(
+  result: Awaited<ReturnType<typeof joinInvite>>,
+  notifications: SetupNotificationWatcherResult,
+): string {
   return [
     `Joined ${result.profile.workspaceName} as @${result.profile.handle}.`,
     `Profile: ${result.profile.profileName}`,
@@ -254,12 +323,32 @@ function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string
     '',
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'manual' }),
     '',
-    'Notifications:',
-    `npx -y handoff-relay watch --profile ${result.profile.profileName} --background`,
+    ...formatNotificationSetupHuman(notifications),
     '',
     'Agent prompt:',
     result.nextAgentInstruction,
   ].join('\n');
+}
+
+function formatNotificationSetupHuman(result: SetupNotificationWatcherResult): string[] {
+  if (result.status === 'failed') {
+    return [
+      'Notifications: could not start automatically.',
+      `Reason: ${result.error ?? 'Unknown error'}`,
+      `Retry: npx -y handoff-relay watch --profile ${result.profileName} --background`,
+      `Opt out: npx -y handoff-relay watch --profile ${result.profileName} --stop`,
+    ];
+  }
+  const profileName = result.metadata?.profileName ?? result.profileName;
+  const status =
+    result.status === 'already_running'
+      ? 'already running in the background.'
+      : 'started in the background.';
+  return [
+    `Notifications: ${status}`,
+    `Stop: npx -y handoff-relay watch --profile ${profileName} --stop`,
+    `Check: npx -y handoff-relay watch --profile ${profileName} --status`,
+  ];
 }
 
 function formatLeaveHuman(result: Awaited<ReturnType<typeof leaveWorkspaceProfile>>): string {

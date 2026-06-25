@@ -16,7 +16,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { buildApiServer } from '../src/api/server.js';
 import { RelayApiClient } from '../src/api/client.js';
-import { runCli } from '../src/cli.js';
+import { runCli, type CliRunResult } from '../src/cli.js';
+import type { BackgroundNotificationWatcherStartInput } from '../src/notification-watch-lifecycle.js';
 import {
   createBackendForProfile,
   createInviteForProfile,
@@ -63,6 +64,33 @@ async function startProfileBackedApi(dbPath: string) {
 
 function tempHome() {
   return mkdtempSync(join(tmpdir(), 'handoff-home-'));
+}
+
+async function runCliWithImplicitWatcher(
+  argv: string[],
+): Promise<{ result: CliRunResult; watcherCalls: BackgroundNotificationWatcherStartInput[] }> {
+  const watcherCalls: BackgroundNotificationWatcherStartInput[] = [];
+  const result = await runCli(argv, {
+    setup: {
+      startNotificationWatcher: async (input) => {
+        watcherCalls.push(input);
+        return {
+          metadata: {
+            schemaVersion: 1,
+            desktopNotifications: input.desktopNotifications,
+            intervalMs: input.intervalMs,
+            logPath: join(input.home, 'logs', `watch-${input.profileName}.log`),
+            pid: 4242,
+            profileName: input.profileName,
+            startedAt: '2026-01-02T03:04:05.000Z',
+            webhookUrl: input.webhookUrl,
+          },
+          status: 'started',
+        };
+      },
+    },
+  });
+  return { result, watcherCalls };
 }
 
 function writeServerMetadataFixture(
@@ -456,11 +484,32 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     process.env.HANDOFF_HOME = aliceHome;
     process.env.HOME = aliceHome;
     try {
-      const result = await runCli(['join', invite.inviteLink, '--install-mcp', 'claude', '--json']);
+      const { result, watcherCalls } = await runCliWithImplicitWatcher([
+        'join',
+        invite.inviteLink,
+        '--install-mcp',
+        'claude',
+        '--json',
+      ]);
       const parsed = JSON.parse(result.stdout);
       const config = JSON.parse(readFileSync(join(aliceHome, '.claude.json'), 'utf8'));
 
       expect(result.code).toBe(0);
+      expect(watcherCalls).toHaveLength(1);
+      expect(watcherCalls[0]).toMatchObject({
+        desktopNotifications: true,
+        home: aliceHome,
+        intervalMs: 5000,
+        profileName: 'default',
+      });
+      expect(parsed.notifications).toMatchObject({
+        metadata: expect.objectContaining({
+          desktopNotifications: true,
+          intervalMs: 5000,
+          profileName: 'default',
+        }),
+        status: 'started',
+      });
       expect(parsed.mcp.status).toBe('installed');
       expect(parsed.mcp.configs).toContainEqual(
         expect.objectContaining({ client: 'claude-code', installed: true }),
@@ -508,7 +557,8 @@ describe('invite, join, LAN, and doctor setup flows', () => {
 
     expect(retry.profile.memberId).toBe(first.profile.memberId);
     expect(retry.profile.workspaceId).toBe(first.profile.workspaceId);
-    expect(retry.nextAgentInstruction).toContain('handoff watch --background');
+    expect(retry.nextAgentInstruction).toContain('Notifications start automatically');
+    expect(retry.nextAgentInstruction).not.toContain('handoff watch --background');
   });
 
   test('join rerun can finish MCP install after the profile already exists', async () => {
@@ -818,11 +868,20 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       process.env.HOME = aliceHome;
       process.env.HANDOFF_HOME = aliceHome;
 
-      const result = await runCli(['join', invite.inviteLink]);
+      const { result, watcherCalls } = await runCliWithImplicitWatcher(['join', invite.inviteLink]);
 
       expect(result.code).toBe(0);
+      expect(watcherCalls).toHaveLength(1);
+      expect(watcherCalls[0]).toMatchObject({
+        desktopNotifications: true,
+        home: aliceHome,
+        intervalMs: 5000,
+        profileName: 'default',
+      });
       expect(result.stdout).toContain('Command: npx -y handoff-relay server mcp --profile default');
-      expect(result.stdout).toContain('handoff-relay watch --profile default --background');
+      expect(result.stdout).toContain('Notifications: started in the background.');
+      expect(result.stdout).toContain('handoff-relay watch --profile default --stop');
+      expect(result.stdout).not.toContain('watch --profile default --background');
       expect(result.stdout).not.toContain('--desktop-notifications');
       expect(result.stdout).toContain('relay_review_next -> relay_hydrate_approved');
       expect(result.stdout).not.toContain('start --install-mcp');
@@ -1363,17 +1422,64 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     process.env.HANDOFF_HOME = home;
     process.env.HANDOFF_TEST_SKIP_SERVER = '1';
     try {
-      const result = await runCli(['start', '--json']);
+      const { result, watcherCalls } = await runCliWithImplicitWatcher(['start', '--json']);
       const parsed = JSON.parse(result.stdout);
       const credentialFile = join(home, 'credentials', 'default.json');
       const credentials = JSON.parse(readFileSync(credentialFile, 'utf8'));
 
       expect(result.code).toBe(0);
+      expect(watcherCalls).toHaveLength(1);
+      expect(watcherCalls[0]).toMatchObject({
+        desktopNotifications: true,
+        home,
+        intervalMs: 5000,
+        profileName: 'default',
+      });
       expect(parsed.profile).toBe('default');
+      expect(parsed.notifications).toMatchObject({
+        metadata: expect.objectContaining({
+          desktopNotifications: true,
+          intervalMs: 5000,
+          profileName: 'default',
+        }),
+        status: 'started',
+      });
       expect(parsed.workspaceName).toBeTruthy();
       expect(existsSync(credentialFile)).toBe(true);
       expect(result.stdout).not.toContain(credentials.memberToken);
       expect(result.stdout).not.toContain(credentials.approvalSecret);
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
+  test('CLI start succeeds and reports when automatic notifications cannot start', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      const result = await runCli(['start', '--json'], {
+        setup: {
+          startNotificationWatcher: async () => {
+            throw new Error('notification process blocked');
+          },
+        },
+      });
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.profile).toBe('default');
+      expect(parsed.notifications).toMatchObject({
+        error: 'notification process blocked',
+        profileName: 'default',
+        status: 'failed',
+      });
     } finally {
       delete process.env.HANDOFF_TEST_SKIP_SERVER;
       if (previous === undefined) {
@@ -1390,9 +1496,11 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     process.env.HANDOFF_HOME = home;
     process.env.HANDOFF_TEST_SKIP_SERVER = '1';
     try {
-      const first = await runCli(['start', '--invite', 'alice', '--json']);
-      const second = await runCli(['start', '--invite', '@alice', '--json']);
-      const human = await runCli(['start', '--invite', 'alice']);
+      const first = (await runCliWithImplicitWatcher(['start', '--invite', 'alice', '--json']))
+        .result;
+      const second = (await runCliWithImplicitWatcher(['start', '--invite', '@alice', '--json']))
+        .result;
+      const human = (await runCliWithImplicitWatcher(['start', '--invite', 'alice'])).result;
 
       expect(first.code).toBe(0);
       expect(second.code).toBe(0);
@@ -1402,6 +1510,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       const secondParsed = JSON.parse(second.stdout);
 
       expect(firstParsed.invites).toHaveLength(1);
+      expect(firstParsed.notifications.status).toBe('started');
       expect(firstParsed.invites[0]).toMatchObject({
         handle: 'alice',
         joinCommand: expect.stringContaining('npx -y handoff-relay join '),
@@ -1427,7 +1536,12 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     process.env.HOME = home;
     process.env.HANDOFF_TEST_SKIP_SERVER = '1';
     try {
-      const result = await runCli(['start', '--install-mcp', 'codex', '--json']);
+      const { result } = await runCliWithImplicitWatcher([
+        'start',
+        '--install-mcp',
+        'codex',
+        '--json',
+      ]);
       const config = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
       const parsed = JSON.parse(result.stdout);
 
@@ -1453,7 +1567,12 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     process.env.HOME = home;
     process.env.HANDOFF_TEST_SKIP_SERVER = '1';
     try {
-      const result = await runCli(['start', '--install-mcp', 'claude', '--json']);
+      const { result } = await runCliWithImplicitWatcher([
+        'start',
+        '--install-mcp',
+        'claude',
+        '--json',
+      ]);
       const config = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
       const parsed = JSON.parse(result.stdout);
 

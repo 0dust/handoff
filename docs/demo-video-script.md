@@ -31,7 +31,7 @@ rm -f .relay/demo-video.db .relay/demo-video.db-shm .relay/demo-video.db-wal
    - share status ending in `archived`
    - audit receipts on the packets
 
-4. Show the watcher notification command users run in a second terminal:
+4. Show a one-shot notification poll for the explicit-auth demo database:
 
    ```bash
    npx -y handoff-relay watch --db .relay/demo-video.db --token <alice-token> --workspace <workspace-id> --once

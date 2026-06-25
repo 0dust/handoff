@@ -323,7 +323,7 @@ export async function joinInvite(input: {
         profile: existing,
         mcp: summarizeMcpSetup({ env, profileName, skipped: input.noMcpInstall }),
         nextAgentInstruction:
-          'Use Handoff to check notifications with `handoff watch --background`, then use relay_review_next -> relay_hydrate_approved for received packets.',
+          'Notifications start automatically after setup. Use relay_review_next -> relay_hydrate_approved for received packets.',
       };
     }
   }
@@ -380,7 +380,7 @@ export async function joinInvite(input: {
     profile,
     mcp: summarizeMcpSetup({ env, profileName, skipped: input.noMcpInstall }),
     nextAgentInstruction:
-      'Use Handoff to package context for a teammate with relay_share -> relay_send_approved, or receive with relay_review_next -> relay_hydrate_approved.',
+      'Notifications start automatically after setup. Use Handoff to package context for a teammate with relay_share -> relay_send_approved, or receive with relay_review_next -> relay_hydrate_approved.',
   };
 }
 

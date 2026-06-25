@@ -21,10 +21,11 @@ If you are joining someone else's workspace, ask them for the invite command and
 
 ```bash
 npx -y handoff-relay join <invite-link> --install-mcp codex
-npx -y handoff-relay watch --background
 ```
 
 Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
+
+Packet notifications start automatically after `start` or `join`. Use `npx -y handoff-relay watch --status` to check them or `npx -y handoff-relay watch --stop` to opt out.
 
 If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex, Claude Code, or Cursor, Handoff can write the common user config while hosting or joining:
 
