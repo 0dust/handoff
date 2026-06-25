@@ -104,8 +104,8 @@ npx -y handoff-relay status <packet-id> --db .relay/team.db --token <sender-toke
 
 Strict mode requires explicit review and a human approval token:
 
-- Ask/share packets: recipient should `relay_review`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
-- Reply packets: sender should `relay_review`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
+- Ask/share packets: recipient should `relay_review_next`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
+- Reply packets: sender should `relay_review_next`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
 
 Invalid transitions return `INVALID_STATE_TRANSITION`.
 

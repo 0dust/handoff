@@ -70,7 +70,7 @@ npx -y handoff-relay join <invite-link> --install-mcp codex
 npx -y handoff-relay watch
 ```
 
-After that, use Handoff inside the agent. The sender path is `relay_share` or `relay_ask` -> human review -> `relay_send_approved`. The recipient path is `relay_inbox` -> `relay_review` -> human review -> `relay_hydrate_approved`.
+After that, use Handoff inside the agent. The sender path is `relay_share` or `relay_ask` -> human review -> `relay_send_approved`. The recipient path is `relay_review_next` -> human review -> `relay_hydrate_approved`.
 
 ## Mental Model
 
@@ -272,7 +272,7 @@ Set up Handoff as the host/admin for my team.
 4. Start packet notifications with `watch`.
 5. Give me the exact join command printed for each teammate.
 6. Run `doctor`.
-7. Confirm whether my coding agent can see `relay_share`, `relay_send_approved`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
+7. Confirm whether my coding agent can see `relay_share`, `relay_send_approved`, `relay_review_next`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```
 
 ### Member Prompt
@@ -286,7 +286,7 @@ Set up my machine as a Handoff team member.
    If I use Claude Code, use `--install-mcp claude` instead.
 4. Start packet notifications with `watch`.
 5. Run `doctor`.
-6. Confirm whether my coding agent can see `relay_inbox`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
+6. Confirm whether my coding agent can see `relay_review_next` and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```
 
 ## Using Handoff
@@ -306,7 +306,7 @@ Recipient prompt:
 
 ```text
 Use Handoff to check my inbox.
-Call relay_review on the packet, then show me the Relay Packet and redaction report.
+Call relay_review_next, then show me the Relay Packet and redaction report.
 If I approve, call relay_hydrate_approved.
 ```
 
@@ -321,7 +321,7 @@ Handoff MCP tools are grouped by workflow:
 | Workflow | Tools                                                                          |
 | -------- | ------------------------------------------------------------------------------ |
 | Send     | `relay_share`, `relay_ask`, `relay_update_draft`, `relay_send_approved`        |
-| Receive  | `relay_inbox`, `relay_review`, `relay_hydrate_approved`                        |
+| Receive  | `relay_review_next`, `relay_hydrate_approved`, `relay_inbox`, `relay_review`   |
 | Fallback | `relay_status`, `relay_view`, `relay_accept`, `relay_hydrate`, `relay_approve` |
 | Reply    | `relay_reply`, `relay_send_approved`                                           |
 | Triage   | `relay_clarify`, `relay_decline`, `relay_archive`                              |

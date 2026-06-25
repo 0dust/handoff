@@ -141,6 +141,7 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name.
 - `relay_project_aliases`: lists workspace project/repo aliases.
 - `relay_send_approved`: approves and sends ask/share packets, or approves reply packets after human review. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_review_next`: opens the next actionable inbox packet and returns next actions before hydration.
 - `relay_inbox`: lists packets addressed to the current member.
 - `relay_review`: records review and returns next actions before hydration.
 - `relay_hydrate_approved`: accepts when needed and hydrates a reviewed packet after human approval. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.

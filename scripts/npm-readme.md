@@ -68,7 +68,7 @@ Ask the receiving agent:
 
 ```text
 Check my Handoff inbox.
-Call relay_review on the packet and show me the Relay Packet before hydration.
+Call relay_review_next and show me the Relay Packet before hydration.
 If I approve, call relay_hydrate_approved.
 ```
 
@@ -168,8 +168,9 @@ handoff demo two-user
 | `relay_share`            | Draft a share packet from current context.               |
 | `relay_update_draft`     | Edit a draft before approval.                            |
 | `relay_send_approved`    | Approve and send an ask, share, or reply packet.         |
+| `relay_review_next`      | Open the next actionable inbox packet for review.        |
 | `relay_inbox`            | List packets addressed to the current member.            |
-| `relay_review`           | Mark a packet reviewed and return next actions.          |
+| `relay_review`           | Mark a chosen packet reviewed and return next actions.   |
 | `relay_hydrate_approved` | Hydrate a reviewed packet after human approval.          |
 | `relay_approve`          | Compatibility approval tool.                             |
 | `relay_reply`            | Draft a reply packet.                                    |

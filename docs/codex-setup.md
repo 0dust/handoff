@@ -62,7 +62,7 @@ Recipient flow:
 
 ```text
 Use Handoff to check my inbox.
-Call relay_review on the packet and show me the Relay Packet and redaction report before hydration.
+Call relay_review_next and show me the Relay Packet and redaction report before hydration.
 If I approve, call relay_hydrate_approved.
 ```
 

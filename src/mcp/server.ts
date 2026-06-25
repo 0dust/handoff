@@ -12,6 +12,7 @@ import {
   projectInputSchema,
   sourceClientInputSchema,
 } from '../protocol/inputs.js';
+import type { RelayPacket } from '../protocol/schema.js';
 import { runtimeVersion } from '../runtime/version.js';
 import { RelayService, type ApprovalAction } from '../service/relay-service.js';
 import { createBackendForProfile } from '../setup/orchestrator.js';
@@ -32,6 +33,7 @@ const projectInput = projectInputSchema;
 const packetQueryInput = packetQueryInputShape;
 const evidenceInput = evidenceInputSchema;
 const claimInput = claimInputSchema;
+const reviewableInboxStatuses = ['delivered', 'replied', 'viewed', 'accepted'];
 
 type RelayBackend = RelayService | RelayApiClient;
 
@@ -50,9 +52,32 @@ export interface McpDefinitionOptions {
 }
 
 function asToolResult(value: unknown) {
-  return {
+  const result = {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: value as Record<string, unknown>,
+  };
+  if (isStructuredObject(value)) {
+    return { ...result, structuredContent: value };
+  }
+  return result;
+}
+
+function isStructuredObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function withRecipientReviewGuidance<T extends object>(
+  result: T,
+): T & {
+  next_actions: string[];
+} {
+  return {
+    ...result,
+    next_actions: [
+      'Show this packet and redaction_report to the human.',
+      'If approved, call relay_hydrate_approved with this packetId.',
+      'If more context is needed, call relay_clarify.',
+      'If the packet should not be used, call relay_decline.',
+    ],
   };
 }
 
@@ -222,6 +247,37 @@ export function getMcpToolDefinitions(
       handler: async (args) => service.listInbox(args),
     },
     {
+      name: 'relay_review_next',
+      description:
+        'Recipient shortcut: check the inbox, open the next actionable packet, mark it viewed when needed, and return next actions. Use this when the human says "check my Handoff inbox".',
+      inputSchema: {
+        authToken: z.string(),
+        workspaceId: z.string(),
+      },
+      handler: async (args) => {
+        const inbox = await service.listInbox(args);
+        const packet = inbox.find((candidate: RelayPacket) =>
+          reviewableInboxStatuses.includes(candidate.status),
+        );
+        if (!packet) {
+          return {
+            inbox_count: inbox.length,
+            packet: null,
+            next_actions: ['No open Handoff packets need review right now.'],
+          };
+        }
+        return {
+          ...withRecipientReviewGuidance(
+            await service.viewPacket({
+              authToken: args.authToken,
+              packetId: packet.packet_id,
+            }),
+          ),
+          inbox_count: inbox.length,
+        };
+      },
+    },
+    {
       name: 'relay_status',
       description:
         'Inspect a readable packet without changing workflow state. For recipient review, prefer relay_review so delivered packets are marked viewed before hydration.',
@@ -282,16 +338,7 @@ export function getMcpToolDefinitions(
         packetId: z.string(),
       },
       handler: async (args) => {
-        const result = await service.viewPacket(args);
-        return {
-          ...result,
-          next_actions: [
-            'Show this packet and redaction_report to the human.',
-            'If approved, call relay_hydrate_approved with this packetId.',
-            'If more context is needed, call relay_clarify.',
-            'If the packet should not be used, call relay_decline.',
-          ],
-        };
+        return withRecipientReviewGuidance(await service.viewPacket(args));
       },
     },
     {

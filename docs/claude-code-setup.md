@@ -79,7 +79,7 @@ Recipient side:
 
 ```text
 Check my Handoff inbox.
-Call relay_review on the packet and show me the Relay Packet before hydration.
+Call relay_review_next and show me the Relay Packet before hydration.
 If I approve, call relay_hydrate_approved.
 ```
 

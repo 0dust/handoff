@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Command } from 'commander';
 import { describe, expect, test } from 'vitest';
 
@@ -10,7 +11,7 @@ import { RelayApiClient } from '../src/api/client.js';
 import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
 import { registerServerCommands } from '../src/cli/server-commands.js';
-import { getMcpToolDefinitions } from '../src/mcp/server.js';
+import { createMcpServer, getMcpToolDefinitions } from '../src/mcp/server.js';
 import { createNotificationDispatcher, createPollingWatcher } from '../src/notifications.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createProfileStore } from '../src/setup/profile.js';
@@ -428,6 +429,7 @@ describe('MCP tool contracts', () => {
         'relay_share',
         'relay_approve',
         'relay_inbox',
+        'relay_review_next',
         'relay_status',
         'relay_hydrate',
         'relay_reply',
@@ -484,6 +486,28 @@ describe('MCP tool contracts', () => {
     });
 
     expect(result).toMatchObject({ status: 'pending_sender_approval' });
+  });
+
+  test('MCP array tool results stay text-only to satisfy structured content schema', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Array Result Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const server = createMcpServer(service, {
+      authContext: {
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const inboxTool = (server as any)._registeredTools.relay_inbox;
+
+    const result = await inboxTool.handler({});
+
+    expect(result.content[0].text).toBe('[]');
+    expect(result.structuredContent).toBeUndefined();
+    expect(CallToolResultSchema.safeParse(result).success).toBe(true);
   });
 
   test('profile-backed MCP remains strict without agent-confirmed approvals', async () => {
@@ -645,6 +669,65 @@ describe('MCP tool contracts', () => {
     );
     expect(hydrated.packet.status).toBe('hydrated');
     expect(hydrated.context).toContain('refresh retry path');
+  });
+
+  test('MCP review_next opens an inbox packet without requiring the agent to know its id', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Review Next Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    const senderTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: workspace.admin.approval_secret,
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const recipientTools = getMcpToolDefinitions(service, {
+      agentApprovals: true,
+      authContext: {
+        approvalSecret: alice.member.approval_secret,
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      },
+    });
+    const shareTool = senderTools.find((tool) => tool.name === 'relay_share');
+    const sendApprovedTool = senderTools.find((tool) => tool.name === 'relay_send_approved');
+    const reviewNextTool = recipientTools.find((tool) => tool.name === 'relay_review_next');
+
+    expect(reviewNextTool).toBeDefined();
+    expect(reviewNextTool!.description).toContain('Recipient shortcut');
+    await expect(reviewNextTool?.handler({})).resolves.toMatchObject({
+      inbox_count: 0,
+      packet: null,
+    });
+
+    const draft = await shareTool?.handler({
+      to: '@alice',
+      finding: 'The webhook ack path should be retried after local delivery.',
+      title: 'Review next handoff',
+      summary: 'Open the next inbox packet directly.',
+      sourceClient: 'codex',
+    });
+    await sendApprovedTool?.handler({ packetId: draft.id });
+
+    const reviewed = await reviewNextTool?.handler({});
+
+    expect(reviewed.packet.packet_id).toBe(draft.id);
+    expect(reviewed.packet.status).toBe('viewed');
+    expect(reviewed.inbox_count).toBe(1);
+    expect(reviewed.next_actions).toEqual(
+      expect.arrayContaining([expect.stringContaining('relay_hydrate_approved')]),
+    );
   });
 
   test('MCP hydrate shortcut requires review for reply packets and hydrates without accept', async () => {
