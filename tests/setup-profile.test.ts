@@ -510,6 +510,44 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(retry.profile.workspaceId).toBe(first.profile.workspaceId);
   });
 
+  test('join rerun can finish MCP install after the profile already exists', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const retry = await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      installMcpClient: 'claude-code',
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const config = JSON.parse(readFileSync(join(aliceHome, '.claude.json'), 'utf8'));
+
+    expect(retry.mcp.status).toBe('installed');
+    expect(config.mcpServers.handoff.args).toEqual([
+      '-y',
+      'handoff-relay',
+      'server',
+      'mcp',
+      '--profile',
+      'default',
+    ]);
+  });
+
   test('join rejects a different invite when the target profile is already joined', async () => {
     const hostHome = tempHome();
     const aliceHome = tempHome();

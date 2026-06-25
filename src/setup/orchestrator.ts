@@ -311,6 +311,13 @@ export async function joinInvite(input: {
           `Handoff profile "${profileName}" is already joined as @${existing.handle}. Use --profile <new-name> for another invite.`,
         );
       }
+      if (input.installMcpClient) {
+        installMcpConfig({
+          client: input.installMcpClient,
+          env,
+          profileName,
+        });
+      }
       return {
         backend: new RelayApiClient({ serverUrl: existing.serverUrl }),
         profile: existing,
