@@ -11,7 +11,7 @@ import {
 } from '../setup/orchestrator.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
-type InstallableMcpClient = Exclude<McpClientId, 'claude-code'>;
+type InstallableMcpClient = McpClientId;
 
 export function registerSetupCommands(program: Command, input: { io: CliIo }): void {
   const { io } = input;
@@ -30,7 +30,7 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
       collectOption,
       [],
     )
-    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
+    .option('--install-mcp <client>', 'Install MCP config for codex, claude, or cursor')
     .option('--port <port>', 'Server port')
     .option('--public-url <url>', 'Public invite base URL')
     .option('--no-mcp-install', 'Do not offer automatic MCP setup')
@@ -41,7 +41,7 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
           displayName?: string;
           handle?: string;
           host?: string;
-          installMcp?: 'codex' | 'cursor';
+          installMcp?: string;
           invite?: string[];
           lan?: boolean;
           mcpInstall?: boolean;
@@ -98,7 +98,7 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
     .option('--profile <name>', 'Profile name')
     .option('--display-name <name>', 'Display name')
     .option('--server-url <url>', 'Server URL for raw invite tokens')
-    .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
+    .option('--install-mcp <client>', 'Install MCP config for codex, claude, or cursor')
     .option('--no-mcp-install', 'Do not offer automatic MCP setup')
     .option('--json', 'Print JSON output')
     .action(
@@ -158,7 +158,10 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
 function parseInstallMcpClient(value: string | undefined): InstallableMcpClient | undefined {
   if (!value) return undefined;
   if (value === 'codex' || value === 'cursor') return value;
-  throw new Error('Unsupported MCP client. Use --install-mcp codex or --install-mcp cursor.');
+  if (value === 'claude' || value === 'claude-code') return 'claude-code';
+  throw new Error(
+    'Unsupported MCP client. Use --install-mcp codex, --install-mcp claude, or --install-mcp cursor.',
+  );
 }
 
 function collectOption(value: string, previous: string[] = []): string[] {
@@ -296,11 +299,18 @@ function formatMcpSetupHuman(
   }
   if (options.missingInstallHint === 'start') {
     lines.push('Install for Codex: npx -y handoff-relay start --install-mcp codex');
+    lines.push('Install for Claude Code: npx -y handoff-relay start --install-mcp claude');
     lines.push('Install for Cursor: npx -y handoff-relay start --install-mcp cursor');
   } else {
     lines.push(
       `Codex config: ${
         mcp.installCommands.find((command) => command.startsWith('Add to ~/.codex/')) ?? mcp.command
+      }`,
+    );
+    lines.push(
+      `Claude Code config: ${
+        mcp.installCommands.find((command) => command.startsWith('Add to ~/.claude.json')) ??
+        mcp.command
       }`,
     );
     lines.push(
@@ -310,11 +320,5 @@ function formatMcpSetupHuman(
       }`,
     );
   }
-  lines.push(
-    `Claude Code: ${
-      mcp.installCommands.find((command) => command.startsWith('claude ')) ??
-      'add the command above with claude mcp add-json'
-    }`,
-  );
   return lines;
 }

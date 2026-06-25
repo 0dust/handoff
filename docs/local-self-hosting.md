@@ -51,6 +51,8 @@ their local profile stores the server URL, member token, workspace ID, and appro
 ```bash
 npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp codex
 # or
+npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp claude
+# or
 npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp cursor
 ```
 

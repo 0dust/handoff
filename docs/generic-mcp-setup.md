@@ -20,16 +20,18 @@ npx -y handoff-relay doctor
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the same profile-backed MCP command for her MCP client.
 
-Handoff can write MCP config for Codex and Cursor when you ask explicitly:
+Handoff can write MCP config for Codex, Claude Code, and Cursor when you ask explicitly:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
 npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp claude
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
-For Claude Code and other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
+For other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
 
 For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
 

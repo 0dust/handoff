@@ -53,7 +53,7 @@ npx -y handoff-relay start --lan --install-mcp codex --invite alice
 npx -y handoff-relay watch
 ```
 
-Use `--install-mcp cursor` for Cursor. For Claude Code, run `start --lan`, then add the MCP command printed by Handoff with `claude mcp add-json`.
+Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
 
 Add more teammates later with `invite`:
 
@@ -114,7 +114,7 @@ This creates:
 - the SQLite coordination database
 - a reachable server URL for teammates on the network
 - a local profile for the host
-- an MCP config when `--install-mcp codex` or `--install-mcp cursor` is used
+- an MCP config when `--install-mcp codex`, `--install-mcp claude`, or `--install-mcp cursor` is used
 - desktop/webhook-ready notification watching with `watch`
 
 Check it:
@@ -197,20 +197,17 @@ More detail: [docs/codex-setup.md](docs/codex-setup.md).
 
 ### Claude Code
 
-Handoff prints the profile-backed MCP command after `start` or `join`:
+Install automatically when hosting or joining:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+# host/admin who also uses Claude Code
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
+
+# teammate joining with Claude Code
+npx -y handoff-relay join <invite-link> --install-mcp claude
 ```
 
-Add it to Claude Code:
-
-```bash
-claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
-```
-
-Or use MCP JSON:
+The user-scoped Claude Code entry is written to `~/.claude.json` and looks like:
 
 ```json
 {
@@ -271,7 +268,7 @@ Set up Handoff as the host/admin for my team.
 1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
 2. Start a reachable team workspace with `start --lan --install-mcp codex --invite <teammate>`, repeating `--invite` for each teammate I name.
 3. If I use Cursor, use `start --lan --install-mcp cursor --invite <teammate>` instead.
-   If I use Claude Code, show me the `claude mcp add-json` command.
+   If I use Claude Code, use `start --lan --install-mcp claude --invite <teammate>` instead.
 4. Start packet notifications with `watch`.
 5. Give me the exact join command printed for each teammate.
 6. Run `doctor`.
@@ -286,7 +283,7 @@ Set up my machine as a Handoff team member.
 1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
 2. Run the join command my teammate sent me with `--install-mcp codex`.
 3. If I use Cursor, use `--install-mcp cursor` instead.
-   If I use Claude Code, show me the `claude mcp add-json` command after join succeeds.
+   If I use Claude Code, use `--install-mcp claude` instead.
 4. Start packet notifications with `watch`.
 5. Run `doctor`.
 6. Confirm whether my coding agent can see `relay_inbox`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.

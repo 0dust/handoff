@@ -57,7 +57,7 @@ export function detectMcpConfigs(input: {
 }
 
 export function installMcpConfig(input: {
-  client: Exclude<McpClientId, 'claude-code'>;
+  client: McpClientId;
   env?: HandoffEnv;
   profileName: string;
 }): McpClientConfigStatus {
@@ -72,7 +72,8 @@ export function installMcpConfig(input: {
     return configStatus('codex', path, input.profileName);
   }
 
-  const path = join(home, '.cursor', 'mcp.json');
+  const path =
+    input.client === 'claude-code' ? join(home, '.claude.json') : join(home, '.cursor', 'mcp.json');
   mkdirSync(dirname(path), { recursive: true });
   const existing = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
   const next = {
@@ -86,7 +87,7 @@ export function installMcpConfig(input: {
     },
   };
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
-  return configStatus('cursor', path, input.profileName);
+  return configStatus(input.client, path, input.profileName);
 }
 
 export function profileMcpCommand(profileName: string): string {
@@ -186,7 +187,7 @@ function codexHandoffTableRange(contents: string): { end: number; start: number 
 function installCommands(profileName: string): string[] {
   return [
     `Add to ~/.codex/config.toml: ${profileMcpCommand(profileName)}`,
-    `claude mcp add-json handoff '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","${profileName}"]}'`,
+    `Add to ~/.claude.json: ${profileMcpCommand(profileName)}`,
     `Add to ~/.cursor/mcp.json: ${profileMcpCommand(profileName)}`,
   ];
 }

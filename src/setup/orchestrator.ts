@@ -36,7 +36,7 @@ export interface StartHandoffInput {
   handle?: string;
   home?: string;
   host?: string;
-  installMcpClient?: Exclude<McpClientId, 'claude-code'>;
+  installMcpClient?: McpClientId;
   lan?: boolean;
   lifecycle?: ServerLifecycle;
   noMcpInstall?: boolean;
@@ -262,7 +262,7 @@ export async function joinInvite(input: {
   displayName?: string;
   env?: HandoffEnv;
   home?: string;
-  installMcpClient?: Exclude<McpClientId, 'claude-code'>;
+  installMcpClient?: McpClientId;
   invite: string;
   noMcpInstall?: boolean;
   profileName?: string;

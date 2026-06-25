@@ -28,7 +28,7 @@ npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --ins
 npx -y handoff-relay watch
 ```
 
-Use `--install-mcp cursor` for Cursor. For Claude Code, run the printed `claude mcp add-json` command after `start` or `join`.
+Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
 
 `start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, and MCP config when requested. `join` stores the teammate's local profile and member credentials. `watch` sends desktop/webhook-ready notifications when packets arrive.
 
@@ -92,11 +92,11 @@ tool_timeout_sec = 60
 enabled = true
 ```
 
-Claude Code:
+Claude Code can be wired automatically while hosting or joining:
 
 ```bash
-claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
+npx -y handoff-relay join <invite-link> --install-mcp claude
 ```
 
 Cursor can be wired automatically while hosting or joining:
@@ -106,7 +106,7 @@ npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
-Claude Desktop, Cursor, and other `mcpServers` clients can use the JSON config above.
+Claude Desktop, Claude Code project config, Cursor, and other `mcpServers` clients can use the JSON config above.
 
 ## Human Approval
 
@@ -144,9 +144,9 @@ Requires Node.js 20+.
 ## CLI Commands
 
 ```bash
-handoff start [--lan] [--install-mcp codex|cursor]
+handoff start [--lan] [--install-mcp codex|claude|cursor]
 handoff invite <handle>
-handoff join <invite-link> [--install-mcp codex|cursor]
+handoff join <invite-link> [--install-mcp codex|claude|cursor]
 handoff leave
 handoff remove-member <handle-or-id>
 handoff doctor

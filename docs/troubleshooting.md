@@ -26,16 +26,18 @@ npx -y handoff-relay watch
 
 Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
 
-If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config while hosting or joining:
+If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex, Claude Code, or Cursor, Handoff can write the common user config while hosting or joining:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
 npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp claude
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
-For Claude Code or another MCP client, add the printed profile-backed command:
+For another MCP client, add the printed profile-backed command:
 
 ```bash
 npx -y handoff-relay server mcp --profile default

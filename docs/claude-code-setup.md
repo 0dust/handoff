@@ -7,28 +7,28 @@ Handoff runs as a local stdio MCP server near each user's Claude Code session. T
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y handoff-relay start --lan --invite alice
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
 npx -y handoff-relay watch
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
-npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token>
+npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp claude
 npx -y handoff-relay watch
 ```
 
-Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the profile-backed MCP command for her Claude Code config.
+Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and writes the profile-backed Claude Code MCP config when `--install-mcp claude` is present.
 
 If Alice is not on the same network, host Handoff behind a reachable URL and use `start --public-url <url>` or the dedicated server path in [Local self-hosting](local-self-hosting.md).
 
-Handoff cannot safely edit every Claude Code config shape automatically, so setup prints the profile-backed command and the `claude mcp add-json` command below. `doctor` reports `WARN` until a supported MCP config contains that profile-backed command.
+Handoff writes the user-scoped Claude Code MCP entry to `~/.claude.json`. `doctor` reports `WARN` until a supported MCP config contains the profile-backed command.
 
 For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
 
-## Add Handoff To Claude Code
+## Add Handoff To Claude Code Manually
 
-Claude Code can add MCP servers with `claude mcp add-json`, and it can load MCP config JSON with `--mcp-config`.
+Use this only when you did not pass `--install-mcp claude` or you prefer project-scoped config. Claude Code can add MCP servers with `claude mcp add-json`, and it can load MCP config JSON with `--mcp-config`.
 
 Add with the CLI:
 
