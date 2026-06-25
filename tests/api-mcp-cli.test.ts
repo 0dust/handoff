@@ -12,6 +12,11 @@ import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
 import { registerServerCommands } from '../src/cli/server-commands.js';
 import { createMcpServer, getMcpToolDefinitions } from '../src/mcp/server.js';
+import {
+  inspectBackgroundNotificationWatcher,
+  startBackgroundNotificationWatcher,
+  stopBackgroundNotificationWatcher,
+} from '../src/notification-watch-lifecycle.js';
 import { createNotificationDispatcher, createPollingWatcher } from '../src/notifications.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createProfileStore } from '../src/setup/profile.js';
@@ -1035,6 +1040,9 @@ describe('CLI and watcher', () => {
     expect(help.stdout).toContain('desktop notifications are enabled by default');
     expect(help.stdout).toContain('--no-desktop-notifications');
     expect(help.stdout).toContain('--desktop-notifications');
+    expect(help.stdout).toContain('--background');
+    expect(help.stdout).toContain('--status');
+    expect(help.stdout).toContain('--stop');
   });
 
   test('server mcp forwards the agent approvals flag to startup', async () => {
@@ -1271,6 +1279,143 @@ describe('CLI and watcher', () => {
 
     expect(attempts).toBe(2);
     expect(ackAttempts).toBe(2);
+  });
+
+  test('background notification watcher records a detached profile watcher and reuses it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'agent-relay-watch-'));
+    const spawned: Array<{ args: string[]; command: string; options: any }> = [];
+    const running = new Set<number>();
+    const deps = {
+      cliPath: '/tmp/handoff-cli.js',
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
+      processIsRunning: (pid: number) => running.has(pid),
+      spawnDetached: (command: string, args: string[], options: any) => {
+        spawned.push({ command, args, options });
+        running.add(4242);
+        return { pid: 4242, unref: () => undefined };
+      },
+    };
+
+    const first = await startBackgroundNotificationWatcher(
+      {
+        desktopNotifications: true,
+        home,
+        intervalMs: 5000,
+        profileName: 'default',
+      },
+      deps,
+    );
+    const second = await startBackgroundNotificationWatcher(
+      {
+        desktopNotifications: true,
+        home,
+        intervalMs: 5000,
+        profileName: 'default',
+      },
+      deps,
+    );
+    const status = await inspectBackgroundNotificationWatcher(
+      { home, profileName: 'default' },
+      deps,
+    );
+
+    expect(first.status).toBe('started');
+    expect(second.status).toBe('already_running');
+    expect(status.status).toBe('running');
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].command).toBe(process.execPath);
+    expect(spawned[0].args).toEqual([
+      '/tmp/handoff-cli.js',
+      'watch',
+      '--profile',
+      'default',
+      '--interval',
+      '5000',
+    ]);
+    expect(spawned[0].options.env.HANDOFF_HOME).toBe(home);
+    expect(first.metadata).toMatchObject({
+      desktopNotifications: true,
+      intervalMs: 5000,
+      pid: 4242,
+      profileName: 'default',
+      startedAt: '2026-01-02T03:04:05.000Z',
+    });
+  });
+
+  test('background notification watcher stop terminates and clears recorded metadata', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'agent-relay-watch-'));
+    let running = true;
+    const deps = {
+      cliPath: '/tmp/handoff-cli.js',
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
+      processIsRunning: () => running,
+      spawnDetached: () => ({ pid: 4243, unref: () => undefined }),
+      killProcess: () => {
+        running = false;
+      },
+      waitForExit: async () => true,
+    };
+
+    await startBackgroundNotificationWatcher(
+      {
+        desktopNotifications: false,
+        home,
+        intervalMs: 5000,
+        profileName: 'default',
+      },
+      deps,
+    );
+    const stopped = await stopBackgroundNotificationWatcher({ home, profileName: 'default' }, deps);
+    const status = await inspectBackgroundNotificationWatcher(
+      { home, profileName: 'default' },
+      deps,
+    );
+
+    expect(stopped.status).toBe('stopped');
+    expect(status.status).toBe('not_found');
+  });
+
+  test('watch --background fails before recording when the stored profile is unreachable', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'agent-relay-watch-'));
+    const store = createProfileStore({ home });
+    const createdAt = new Date('2026-01-02T03:04:05.000Z').toISOString();
+    store.saveProfile({
+      schemaVersion: 1,
+      profileName: 'default',
+      workspaceId: 'wrk_dead',
+      workspaceName: 'Unreachable Team',
+      memberId: 'mem_dead',
+      handle: 'alice',
+      displayName: 'Alice',
+      role: 'member',
+      serverUrl: 'http://127.0.0.1:1',
+      serverMode: 'remote',
+      createdAt,
+      lastVerifiedAt: createdAt,
+    });
+    store.saveCredentials('default', {
+      memberToken: 'relay_member_dead',
+      approvalSecret: 'relay_approval_dead',
+      createdAt,
+    });
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = home;
+      process.env.HANDOFF_HOME = home;
+
+      const result = await runCli(['watch', '--background']);
+      const status = await inspectBackgroundNotificationWatcher({ home, profileName: 'default' });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('SERVER_UNAVAILABLE');
+      expect(status.status).toBe('not_found');
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
   });
 
   test('notification dispatcher can send terminal, desktop-native, and webhook notifications', async () => {

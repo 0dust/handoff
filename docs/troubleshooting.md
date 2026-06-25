@@ -21,7 +21,7 @@ If you are joining someone else's workspace, ask them for the invite command and
 
 ```bash
 npx -y handoff-relay join <invite-link> --install-mcp codex
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
@@ -171,6 +171,7 @@ Desktop notifications are best-effort from the local watcher process:
 - macOS uses `osascript`.
 - Linux uses `notify-send`; install your desktop notification package if it is missing.
 - Windows uses a PowerShell tray notification.
+- For profile-based setup, check the background watcher with `npx -y handoff-relay watch --status`.
 - Use `--no-desktop-notifications` when you only want terminal output.
 
 Webhook notifications require a reachable endpoint that accepts JSON POSTs:

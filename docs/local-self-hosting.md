@@ -129,7 +129,15 @@ Approval secrets stay outside MCP config. `HANDOFF_APPROVAL_SECRET` and the olde
 
 ## Watch Mode
 
-Poll for packet notifications and show terminal plus best-effort desktop notifications:
+Profile-based setup can run packet notifications in the background:
+
+```bash
+npx -y handoff-relay watch --profile default --background
+npx -y handoff-relay watch --profile default --status
+npx -y handoff-relay watch --profile default --stop
+```
+
+For scripts, debugging, or explicit auth, run the watcher in the foreground. It polls for packet notifications and shows terminal plus best-effort desktop notifications:
 
 ```bash
 npx -y handoff-relay watch \

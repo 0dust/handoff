@@ -8,14 +8,14 @@ On Sam's machine, host a LAN-reachable workspace and install the Codex MCP entry
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex --invite alice
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
 npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp codex
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and wires Codex when `--install-mcp codex` is present.

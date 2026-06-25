@@ -8,14 +8,14 @@ On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp claude --invite alice
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
 npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp claude
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and writes the profile-backed Claude Code MCP config when `--install-mcp claude` is present.

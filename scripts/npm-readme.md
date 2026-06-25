@@ -10,7 +10,7 @@ On the host/admin machine, create a LAN-reachable workspace and first invite:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex --invite alice
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 Add more teammates later with `invite`:
@@ -25,12 +25,12 @@ Each teammate runs their own join command:
 
 ```bash
 npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
-npx -y handoff-relay watch
+npx -y handoff-relay watch --background
 ```
 
 Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
 
-`start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, and MCP config when requested. `join` stores the teammate's local profile and member credentials. `watch` sends desktop/webhook-ready notifications when packets arrive.
+`start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, and MCP config when requested. `join` stores the teammate's local profile and member credentials. `watch --background` sends desktop notifications when packets arrive without keeping a terminal open.
 
 ## Use With Agents
 
@@ -156,7 +156,7 @@ handoff inbox
 handoff status <packet-id>
 handoff history
 handoff audit
-handoff watch
+handoff watch --background
 handoff demo two-user
 ```
 

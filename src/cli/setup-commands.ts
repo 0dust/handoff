@@ -208,7 +208,7 @@ function formatStartHuman(
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'start' }),
     '',
     'Notifications:',
-    `npx -y handoff-relay watch --profile ${result.profile.profileName}`,
+    `npx -y handoff-relay watch --profile ${result.profile.profileName} --background`,
   );
   if (invites.length) {
     lines.push('', 'Invites:');
@@ -255,7 +255,7 @@ function formatJoinHuman(result: Awaited<ReturnType<typeof joinInvite>>): string
     ...formatMcpSetupHuman(result.mcp, { missingInstallHint: 'manual' }),
     '',
     'Notifications:',
-    `npx -y handoff-relay watch --profile ${result.profile.profileName}`,
+    `npx -y handoff-relay watch --profile ${result.profile.profileName} --background`,
     '',
     'Agent prompt:',
     result.nextAgentInstruction,

@@ -821,7 +821,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain('Command: npx -y handoff-relay server mcp --profile default');
-      expect(result.stdout).toContain('handoff-relay watch');
+      expect(result.stdout).toContain('handoff-relay watch --profile default --background');
       expect(result.stdout).not.toContain('--desktop-notifications');
       expect(result.stdout).toContain('relay_review_next -> relay_hydrate_approved');
       expect(result.stdout).not.toContain('start --install-mcp');

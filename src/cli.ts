@@ -20,6 +20,12 @@ import {
   type CommonOptions,
 } from './cli/shared.js';
 import { isRelayError } from './errors.js';
+import {
+  inspectBackgroundNotificationWatcher,
+  startBackgroundNotificationWatcher,
+  stopBackgroundNotificationWatcher,
+  type BackgroundNotificationWatcherMetadata,
+} from './notification-watch-lifecycle.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
 import { runtimeVersion } from './runtime/version.js';
 import { createBackendForProfile } from './setup/orchestrator.js';
@@ -796,6 +802,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .description('Poll packet notifications; desktop notifications are enabled by default')
       .option('--interval <ms>', 'Polling interval in ms', '5000')
       .option('--once', 'Poll once and exit')
+      .option('--background', 'Run the profile notification watcher in the background')
+      .option('--status', 'Show the recorded background notification watcher')
+      .option('--stop', 'Stop the recorded background notification watcher')
       .option('--no-desktop-notifications', 'Only print terminal notifications')
       .option('--desktop-notifications', 'Send best-effort native desktop notifications (default)')
       .option(
@@ -812,13 +821,77 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   ).action(
     async (
       options: CommonOptions & {
+        background?: boolean;
         interval: string;
         once?: boolean;
         desktopNotifications?: boolean;
+        status?: boolean;
+        stop?: boolean;
         webhookUrl?: string;
         webhookHeader?: string[];
       },
     ) => {
+      const modeCount = [options.background, options.status, options.stop].filter(Boolean).length;
+      if (modeCount > 1) {
+        throw new Error('Use only one watch mode: --background, --status, or --stop.');
+      }
+      if (options.once && modeCount > 0) {
+        throw new Error('Use --once only with foreground watch mode.');
+      }
+      const intervalMs = Number(options.interval);
+      if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        throw new Error('Polling interval must be a positive number of milliseconds.');
+      }
+      if (modeCount > 0) {
+        const store = createProfileStore();
+        const profileName = resolveProfileName(options.profile);
+        if (options.status) {
+          const result = await inspectBackgroundNotificationWatcher({
+            home: store.home,
+            profileName,
+          });
+          write(io, options.json ? result : formatWatchStatusHuman(result), options.json);
+          return;
+        }
+        if (options.stop) {
+          const result = await stopBackgroundNotificationWatcher({
+            home: store.home,
+            profileName,
+          });
+          write(io, options.json ? result : formatWatchStopHuman(result), options.json);
+          return;
+        }
+        if (options.token || options.workspace || options.db || options.serverUrl) {
+          throw new Error(
+            'watch --background uses a stored profile so credentials are not exposed in process arguments. Run `handoff start` or `handoff join`, then retry with --profile <name>.',
+          );
+        }
+        store.ensureHome();
+        if (!store.loadProfile(profileName)) {
+          throw new Error(
+            `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay start\` or \`npx -y handoff-relay join <invite>\`.`,
+          );
+        }
+        const auth = createAuthContext({ ...options, profile: profileName });
+        try {
+          await auth.backend.listNotifications({
+            authToken: auth.authToken,
+            workspaceId: auth.workspaceId,
+          });
+        } finally {
+          closeBackend(auth.backend);
+        }
+        const result = await startBackgroundNotificationWatcher({
+          desktopNotifications: options.desktopNotifications !== false,
+          home: store.home,
+          intervalMs,
+          profileName,
+          webhookHeaders: options.webhookHeader,
+          webhookUrl: options.webhookUrl,
+        });
+        write(io, options.json ? result : formatWatchBackgroundHuman(result), options.json);
+        return;
+      }
       const auth = createAuthContext(options);
       const notify = createNotificationDispatcher({
         writeTerminal: (message) => io.writeErr(`${message}\n`),
@@ -859,6 +932,64 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   registerDemoCommands(program, { io });
 
   return program;
+}
+
+function formatWatchBackgroundHuman(result: {
+  metadata: BackgroundNotificationWatcherMetadata;
+  status: 'already_running' | 'started';
+}): string {
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'already_running') {
+    return [
+      `Handoff notification watcher is already running for profile "${result.metadata.profileName}" (pid ${pid}).`,
+      `Log: ${result.metadata.logPath}`,
+      `Check: npx -y handoff-relay watch --profile ${result.metadata.profileName} --status`,
+    ].join('\n');
+  }
+  return [
+    `Handoff notification watcher started for profile "${result.metadata.profileName}" (pid ${pid}).`,
+    `Log: ${result.metadata.logPath}`,
+    `Stop: npx -y handoff-relay watch --profile ${result.metadata.profileName} --stop`,
+  ].join('\n');
+}
+
+function formatWatchStatusHuman(result: {
+  metadata?: BackgroundNotificationWatcherMetadata;
+  status: 'not_found' | 'not_running' | 'running';
+}): string {
+  if (!result.metadata) {
+    return 'No Handoff notification watcher is recorded.';
+  }
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'running') {
+    return [
+      `Handoff notification watcher is running for profile "${result.metadata.profileName}" (pid ${pid}).`,
+      `Interval: ${result.metadata.intervalMs}ms`,
+      `Log: ${result.metadata.logPath}`,
+    ].join('\n');
+  }
+  return [
+    `Recorded Handoff notification watcher for profile "${result.metadata.profileName}" is not running.`,
+    `Log: ${result.metadata.logPath}`,
+    `Restart: npx -y handoff-relay watch --profile ${result.metadata.profileName} --background`,
+  ].join('\n');
+}
+
+function formatWatchStopHuman(result: {
+  metadata?: BackgroundNotificationWatcherMetadata;
+  status: 'not_found' | 'not_running' | 'still_running' | 'stopped';
+}): string {
+  if (!result.metadata) {
+    return 'No Handoff notification watcher is recorded.';
+  }
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'not_running') {
+    return `Recorded Handoff notification watcher was not running. Removed stale metadata for profile "${result.metadata.profileName}".`;
+  }
+  if (result.status === 'still_running') {
+    return `Handoff notification watcher for profile "${result.metadata.profileName}" is still running after SIGTERM. Metadata was kept so you can inspect pid ${pid}.`;
+  }
+  return `Stopped Handoff notification watcher for profile "${result.metadata.profileName}" (pid ${pid}).`;
 }
 
 export async function runCli(argv: string[]): Promise<CliRunResult> {
