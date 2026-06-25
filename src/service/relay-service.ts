@@ -380,6 +380,21 @@ export class RelayService {
     }
 
     const now = new Date().toISOString();
+    const pendingInvite = this.db
+      .prepare(
+        `SELECT * FROM invites
+        WHERE workspace_id = ?
+          AND handle = ?
+          AND accepted_at IS NULL
+          AND expires_at > ?
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      )
+      .get(input.workspaceId, handle, now) as InviteRow | undefined;
+    if (pendingInvite) {
+      return { invite: rowToInvite(pendingInvite) };
+    }
+
     const invite: InviteRecord = {
       id: createId('inv'),
       workspace_id: input.workspaceId,

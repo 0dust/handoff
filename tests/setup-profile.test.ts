@@ -392,10 +392,13 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     store.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
 
     const invite = await createInviteForProfile({ home, handle: 'alice' });
+    const rerun = await createInviteForProfile({ home, handle: '@alice' });
     const credentials = store.loadCredentials('default');
 
     expect(invite.joinCommand).toMatch(/^npx -y handoff-relay join http:\/\/127\.0\.0\.1:/);
     expect(parseInviteLink(invite.inviteLink).inviteToken).toMatch(/^relay_invite_/);
+    expect(rerun.joinCommand).toBe(invite.joinCommand);
+    expect(rerun.inviteLink).toBe(invite.inviteLink);
     expect(invite.expiresAt).toBeTruthy();
     expect(JSON.stringify(invite)).not.toContain(credentials.memberToken);
     expect(JSON.stringify(invite)).not.toContain(credentials.approvalSecret);

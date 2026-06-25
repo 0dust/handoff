@@ -20,6 +20,8 @@ npx -y handoff-relay invite alice
 npx -y handoff-relay invite bob
 ```
 
+Rerunning an invite for the same handle before that teammate joins reprints the same active invite.
+
 Each teammate runs their own join command:
 
 ```bash

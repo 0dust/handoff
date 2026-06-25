@@ -71,6 +71,41 @@ describe('workspace identity and permissions', () => {
     expect(rotated.token).not.toBe(accepted.member.token);
   });
 
+  test('reuses an active pending invite when invite is rerun for the same handle', () => {
+    const { service, db } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Relay Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const first = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'Alice',
+    });
+    const rerun = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: '@alice',
+    });
+
+    expect(rerun.invite.id).toBe(first.invite.id);
+    expect(rerun.invite.token).toBe(first.invite.token);
+
+    db.prepare('UPDATE invites SET expires_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 60_000).toISOString(),
+      first.invite.id,
+    );
+    const afterExpiry = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+
+    expect(afterExpiry.invite.id).not.toBe(first.invite.id);
+    expect(afterExpiry.invite.token).not.toBe(first.invite.token);
+  });
+
   test('accept invite can be retried with the same idempotency key', () => {
     const { service, db } = createService();
     const workspace = service.createWorkspace({

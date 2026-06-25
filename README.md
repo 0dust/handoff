@@ -61,6 +61,8 @@ Create one invite per teammate:
 npx -y handoff-relay invite alice
 ```
 
+Rerunning `invite alice` before Alice joins reprints the same active invite instead of creating a confusing duplicate.
+
 Each teammate runs the join command from their invite:
 
 ```bash
