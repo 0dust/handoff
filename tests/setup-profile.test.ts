@@ -1458,6 +1458,33 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     });
   });
 
+  test('Claude Code MCP install backs up malformed JSON config and writes a valid entry', () => {
+    const home = tempHome();
+    const configPath = join(home, '.claude.json');
+    const malformed = '{ "mcpServers": {';
+    writeFileSync(configPath, malformed);
+
+    const status = installMcpConfig({
+      client: 'claude-code',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const rerun = installMcpConfig({
+      client: 'claude-code',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+    expect(status).toMatchObject({ client: 'claude-code', installed: true });
+    expect(rerun).toMatchObject({ client: 'claude-code', installed: true });
+    expect(readFileSync(`${configPath}.handoff-backup`, 'utf8')).toBe(malformed);
+    expect(config.mcpServers.handoff).toEqual({
+      command: 'npx',
+      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+    });
+  });
+
   test('JSON MCP detection ignores explicit-auth on unrelated servers', () => {
     const home = tempHome();
     mkdirSync(join(home, '.cursor'), { recursive: true });

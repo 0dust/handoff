@@ -75,7 +75,7 @@ export function installMcpConfig(input: {
   const path =
     input.client === 'claude-code' ? join(home, '.claude.json') : join(home, '.cursor', 'mcp.json');
   mkdirSync(dirname(path), { recursive: true });
-  const existing = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+  const existing = readJsonMcpConfig(path);
   const next = {
     ...existing,
     mcpServers: {
@@ -149,6 +149,25 @@ function configContainsProfileCommand(contents: string, profileName: string): bo
 
 function containsHandoffPackageToken(contents: string): boolean {
   return /(^|[\s"',[])(handoff-relay)(?=$|[\s"',\]])/.test(contents);
+}
+
+function readJsonMcpConfig(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const contents = readFileSync(path, 'utf8');
+  if (!contents.trim()) return {};
+  try {
+    const parsed = JSON.parse(contents);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Back up below.
+  }
+  const backupPath = `${path}.handoff-backup`;
+  if (!existsSync(backupPath)) {
+    writeFileSync(backupPath, contents);
+  }
+  return {};
 }
 
 function upsertCodexHandoffTable(contents: string, profileName: string): string {
