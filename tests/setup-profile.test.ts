@@ -508,6 +508,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
 
     expect(retry.profile.memberId).toBe(first.profile.memberId);
     expect(retry.profile.workspaceId).toBe(first.profile.workspaceId);
+    expect(retry.nextAgentInstruction).toContain('handoff watch --background');
   });
 
   test('join rerun can finish MCP install after the profile already exists', async () => {
