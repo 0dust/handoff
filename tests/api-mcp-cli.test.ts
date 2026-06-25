@@ -912,6 +912,39 @@ describe('MCP tool contracts', () => {
 });
 
 describe('CLI and watcher', () => {
+  test('root help describes everyday packet workflow commands', async () => {
+    const help = await runCli(['--help']);
+
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain('Draft a question packet for a teammate');
+    expect(help.stdout).toContain('Draft a context-sharing packet for a');
+    expect(help.stdout).toContain('List open packets sent to you');
+    expect(help.stdout).toContain('Generate bounded context for your agent');
+    expect(help.stdout).toContain('Draft a reply to an accepted or hydrated');
+    expect(help.stdout).toContain('List audit receipts for the workspace');
+  });
+
+  test('grouped command help describes nested commands', async () => {
+    const workspace = await runCli(['workspace', '--help']);
+    const workspaceAlias = await runCli(['workspace', 'alias', '--help']);
+    const member = await runCli(['member', '--help']);
+    const server = await runCli(['server', '--help']);
+    const demo = await runCli(['demo', '--help']);
+
+    expect(workspace.code).toBe(0);
+    expect(workspaceAlias.code).toBe(0);
+    expect(member.code).toBe(0);
+    expect(server.code).toBe(0);
+    expect(demo.code).toBe(0);
+    expect(workspace.stdout).toContain('Create a workspace and first admin member');
+    expect(workspaceAlias.stdout).toContain('Map a repo alias to a canonical project name');
+    expect(workspaceAlias.stdout).toContain('List configured project aliases');
+    expect(member.stdout).toContain('Create an invite for a teammate handle');
+    expect(member.stdout).toContain('Rotate the local approval secret');
+    expect(server.stdout).toContain('Run the stdio MCP server');
+    expect(demo.stdout).toContain('Run a local two-user ask/share demo');
+  });
+
   test('watch help documents desktop notifications as the default', async () => {
     const help = await runCli(['watch', '--help']);
 
