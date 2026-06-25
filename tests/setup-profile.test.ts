@@ -1096,6 +1096,60 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('port conflict handling skips wildcard listeners when binding loopback', async () => {
+    const blocker = createServer((_request, response) => {
+      response.writeHead(200).end('not handoff');
+    });
+    await new Promise<void>((resolve) => blocker.listen(0, '0.0.0.0', resolve));
+    const address = blocker.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected TCP server address');
+    }
+    try {
+      const selected = await findAvailablePort({
+        host: '127.0.0.1',
+        preferredPort: address.port,
+      });
+      expect(selected).not.toBe(address.port);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  test('readiness polling rejects a different Handoff server identity', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/health') {
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            name: 'handoff',
+            ok: true,
+            pid: process.pid,
+            server_id: 'srv_other',
+            version: 'test',
+          }),
+        );
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected TCP server address');
+    }
+    try {
+      await expect(
+        waitForHandoffServer(`http://127.0.0.1:${address.port}`, {
+          expectedServerId: 'srv_expected',
+          intervalMs: 25,
+          timeoutMs: 100,
+        }),
+      ).resolves.toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test('readiness polling respects the overall timeout when health responses hang', async () => {
     const server = createServer((request, response) => {
       if (request.url === '/health') {

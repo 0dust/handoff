@@ -1033,6 +1033,29 @@ describe('CLI and watcher', () => {
     expect(demo.stdout).toContain('Run a local two-user ask/share demo');
   });
 
+  test('packet command help describes token auth options', async () => {
+    const commands = [
+      'update-draft',
+      'approve',
+      'approval-token',
+      'status',
+      'view',
+      'accept',
+      'hydrate',
+      'reply',
+      'clarify',
+      'decline',
+      'archive',
+      'close',
+    ];
+    for (const command of commands) {
+      const help = await runCli([command, '--help']);
+
+      expect(help.code).toBe(0);
+      expect(help.stdout).toMatch(/--token <token>\s+Relay member token/);
+    }
+  });
+
   test('watch help documents desktop notifications as the default', async () => {
     const help = await runCli(['watch', '--help']);
 

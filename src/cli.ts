@@ -429,7 +429,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('update-draft')
       .description('Edit an ask/share draft before sender approval')
       .argument('<packetId>', 'Draft packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .option('--title <title>', 'Packet title')
       .option('--summary <summary>', 'Packet summary')
       .option('--question <question>', 'Ask question')
@@ -471,7 +471,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('approve')
       .description('Approve and send a pending ask/share draft')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .requiredOption('--approval-token <token>', 'Human-generated approval token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
@@ -489,7 +489,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('approval-token')
       .description('Create a short-lived human approval token for send, reply, or hydrate')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .option('--profile <name>', 'Profile name')
       .option('--approval-secret <secret>', 'Local approval secret from workspace/member setup')
       .requiredOption('--action <action>', 'send, reply, or hydrate'),
@@ -542,7 +542,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('status')
       .description('Show the current packet state and metadata')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>'),
+      .option('--token <token>', 'Relay member token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
     const result = await auth.backend.getPacketForMember({
@@ -558,7 +558,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('view')
       .description('Mark a delivered packet as viewed and show its metadata')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>'),
+      .option('--token <token>', 'Relay member token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
     const result = await auth.backend.viewPacket({ authToken: auth.authToken, packetId });
@@ -571,7 +571,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('accept')
       .description('Accept a packet before replying')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>'),
+      .option('--token <token>', 'Relay member token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
     const result = await auth.backend.acceptPacket({ authToken: auth.authToken, packetId });
@@ -584,7 +584,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('hydrate')
       .description('Generate bounded context for your agent from a reviewed packet')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .option('--client <client>', 'Client name', 'generic')
       .option('--session <sessionId>', 'Client session id')
       .requiredOption('--approval-token <token>', 'Human-generated hydration approval token'),
@@ -607,7 +607,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .description('Draft a reply to an accepted or hydrated ask packet')
       .argument('<packetId>', 'Original ask packet id')
       .argument('<answer>', 'Reply answer')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .requiredOption('--summary <summary>', 'Reply summary')
       .option('--source-client <client>', 'Source client', 'generic')
       .option('--evidence-json <json>', 'JSON array of evidence objects')
@@ -632,7 +632,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('clarify')
       .description('Ask the sender for missing details before accepting or hydrating')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .requiredOption('--question <question>', 'Clarification question')
       .option('--requested-evidence <items>', 'Comma-separated requested evidence labels'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
@@ -657,7 +657,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
             : 'Archive a packet you are done with',
         )
         .argument('<packetId>', 'Packet id')
-        .option('--token <token>')
+        .option('--token <token>', 'Relay member token')
         .option('--reason <reason>', 'Decline reason'),
     ).action(async (packetId: string, options: CommonOptions & { reason?: string }) => {
       const auth = createAuthContext(options, { requireWorkspace: false });
@@ -679,7 +679,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
       .command('close')
       .description('Close an ask after resolution')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .option('--resolution <resolution>', 'resolved or unresolved', 'resolved'),
   ).action(
     async (

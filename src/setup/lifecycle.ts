@@ -96,7 +96,7 @@ export async function findAvailablePort(input: {
   const maxAttempts = input.maxAttempts ?? 50;
   for (let offset = 0; offset < maxAttempts; offset += 1) {
     const port = candidatePort(input.preferredPort, offset);
-    if (await canListen(input.host, port)) {
+    if (await canSafelyListen(input.host, port)) {
       return port;
     }
   }
@@ -105,11 +105,14 @@ export async function findAvailablePort(input: {
 
 export async function probeHandoffServer(
   serverUrl: string,
-  input: { timeoutMs?: number } = {},
+  input: { expectedServerId?: string; timeoutMs?: number } = {},
 ): Promise<boolean> {
   try {
     const body = await readHandoffHealth(serverUrl, input);
-    return body.name === 'handoff';
+    return (
+      body.name === 'handoff' &&
+      (!input.expectedServerId || body.server_id === input.expectedServerId)
+    );
   } catch {
     return false;
   }
@@ -117,7 +120,12 @@ export async function probeHandoffServer(
 
 export async function waitForHandoffServer(
   serverUrl: string,
-  input: { intervalMs?: number; probeTimeoutMs?: number; timeoutMs?: number } = {},
+  input: {
+    expectedServerId?: string;
+    intervalMs?: number;
+    probeTimeoutMs?: number;
+    timeoutMs?: number;
+  } = {},
 ): Promise<boolean> {
   const timeoutMs = input.timeoutMs ?? 5_000;
   const intervalMs = input.intervalMs ?? 100;
@@ -125,7 +133,14 @@ export async function waitForHandoffServer(
   while (Date.now() < deadline) {
     const remainingMs = deadline - Date.now();
     const probeTimeoutMs = Math.max(1, Math.min(input.probeTimeoutMs ?? 1_000, remainingMs));
-    if (await probeHandoffServer(serverUrl, { timeoutMs: probeTimeoutMs })) return true;
+    if (
+      await probeHandoffServer(serverUrl, {
+        expectedServerId: input.expectedServerId,
+        timeoutMs: probeTimeoutMs,
+      })
+    ) {
+      return true;
+    }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return false;
@@ -183,6 +198,7 @@ export async function ensureLocalServer(input: EnsureServerInput): Promise<Ensur
   closeSync(out);
 
   const ready = await waitForHandoffServer(serverUrl, {
+    expectedServerId: serverId,
     intervalMs: input.readinessIntervalMs,
     timeoutMs: input.readinessTimeoutMs,
   });
@@ -383,6 +399,12 @@ function canListen(host: string, port: number): Promise<boolean> {
     });
     server.listen(port, host);
   });
+}
+
+async function canSafelyListen(host: string, port: number): Promise<boolean> {
+  if (!(await canListen(host, port))) return false;
+  if (host === '0.0.0.0') return true;
+  return canListen('0.0.0.0', port);
 }
 
 function candidatePort(preferredPort: number, offset: number): number {
