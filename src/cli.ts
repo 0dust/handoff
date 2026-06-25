@@ -8,7 +8,7 @@ import { confirmLocalApproval } from './approval.js';
 import { RelayApiClient } from './api/client.js';
 import { registerDemoCommands } from './cli/demo-commands.js';
 import { registerServerCommands } from './cli/server-commands.js';
-import { registerSetupCommands } from './cli/setup-commands.js';
+import { registerSetupCommands, type SetupCommandOptions } from './cli/setup-commands.js';
 import {
   addCommonOptions,
   closeBackend,
@@ -35,6 +35,10 @@ export interface CliRunResult {
   stdout: string;
   stderr: string;
   code: number;
+}
+
+export interface CliProgramOptions {
+  setup?: Omit<SetupCommandOptions, 'io'>;
 }
 
 function createProfileBackend(options: CommonOptions): {
@@ -194,14 +198,14 @@ function parseWebhookHeaders(values: string[] | undefined): Record<string, strin
   return headers;
 }
 
-export function buildCliProgram(io: CliIo = defaultIo): Command {
+export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOptions = {}): Command {
   const program = new Command();
   program
     .name('handoff')
     .description('Human-approved handoffs between coding agents.')
     .version(runtimeVersion);
 
-  registerSetupCommands(program, { io });
+  registerSetupCommands(program, { io, ...options.setup });
 
   const workspace = program.command('workspace').description('Workspace setup flows');
   addCommonOptions(
@@ -992,7 +996,10 @@ function formatWatchStopHuman(result: {
   return `Stopped Handoff notification watcher for profile "${result.metadata.profileName}" (pid ${pid}).`;
 }
 
-export async function runCli(argv: string[]): Promise<CliRunResult> {
+export async function runCli(
+  argv: string[],
+  options: CliProgramOptions = {},
+): Promise<CliRunResult> {
   let stdout = '';
   let stderr = '';
   const output = {
@@ -1003,10 +1010,13 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
       stderr += chunk;
     },
   };
-  const program = buildCliProgram({
-    writeOut: output.writeOut,
-    writeErr: output.writeErr,
-  });
+  const program = buildCliProgram(
+    {
+      writeOut: output.writeOut,
+      writeErr: output.writeErr,
+    },
+    options,
+  );
   program.exitOverride();
   configureOutputRecursively(program, output);
 
