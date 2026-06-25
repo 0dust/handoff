@@ -3,8 +3,7 @@
 Handoff is local-first, but team handoff needs a server Alice's machine can reach. For teammates on the same Wi-Fi, Sam can host directly from his machine:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay doctor
 ```
 
@@ -51,6 +50,8 @@ their local profile stores the server URL, member token, workspace ID, and appro
 
 ```bash
 npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp codex
+# or
+npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp claude
 # or
 npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-mcp cursor
 ```
@@ -128,7 +129,15 @@ Approval secrets stay outside MCP config. `HANDOFF_APPROVAL_SECRET` and the olde
 
 ## Watch Mode
 
-Terminal polling watcher:
+Profile-based setup can run packet notifications in the background:
+
+```bash
+npx -y handoff-relay watch --profile default --background
+npx -y handoff-relay watch --profile default --status
+npx -y handoff-relay watch --profile default --stop
+```
+
+For scripts, debugging, or explicit auth, run the watcher in the foreground. It polls for packet notifications and shows terminal plus best-effort desktop notifications:
 
 ```bash
 npx -y handoff-relay watch \
@@ -138,14 +147,14 @@ npx -y handoff-relay watch \
   --interval 5000
 ```
 
-Add best-effort native desktop notifications on the machine running the watcher:
+Disable desktop notifications for terminal-only scripts or CI:
 
 ```bash
 npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <token> \
   --workspace <workspace-id> \
-  --desktop-notifications
+  --no-desktop-notifications
 ```
 
 Post concise notification summaries to a generic webhook endpoint:
@@ -159,7 +168,7 @@ npx -y handoff-relay watch \
   --webhook-header "Authorization: Bearer <token>"
 ```
 
-The watcher always uses polling. Terminal, desktop, and webhook notifications include sender handle, packet type, title, project, summary, and the open/review action, but never evidence bodies or raw transcripts. For scripts or tests, use `--once` to poll a single time and exit.
+The watcher polls Handoff's durable notification queue. A notification is acknowledged after local delivery, so restarting the watcher does not re-send already delivered packet notifications. Terminal, desktop, and webhook notifications include sender handle, packet type, title, project, summary, notification id, and the open/review action, but never evidence bodies or raw transcripts. For scripts or tests, use `--once` to poll a single time and exit.
 
 ## From A Local Checkout
 

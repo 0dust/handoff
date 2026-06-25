@@ -3,8 +3,7 @@
 Use this path for automation, remote/self-hosted coordination servers, CI smoke tests, or explicit-auth MCP compatibility. Most users should start with:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay join http://<host>:3737/invite/<invite-token>
 ```
 
@@ -186,7 +185,7 @@ npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \
   --token <member-token> \
   --workspace <workspace-id> \
-  --desktop-notifications
+  --no-desktop-notifications
 
 npx -y handoff-relay watch \
   --server-url http://10.0.0.10:3737 \

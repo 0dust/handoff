@@ -14,28 +14,30 @@ Doctor checks the Handoff home directory, active profile, credential file permis
 If the profile is missing and you are hosting a workspace for teammates, run:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 If you are joining someone else's workspace, ask them for the invite command and run:
 
 ```bash
-npx -y handoff-relay join <invite-link>
+npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay watch --background
 ```
 
 Plain `start` is only the right recovery path for local demos, CI smoke tests, or two profiles on one machine.
 
-If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config while hosting or joining:
+If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex, Claude Code, or Cursor, Handoff can write the common user config while hosting or joining:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp claude
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
-For Claude Code or another MCP client, add the printed profile-backed command:
+For another MCP client, add the printed profile-backed command:
 
 ```bash
 npx -y handoff-relay server mcp --profile default
@@ -44,8 +46,7 @@ npx -y handoff-relay server mcp --profile default
 If a teammate cannot join from another machine, restart the host in LAN mode and send a fresh invite:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 ## `better-sqlite3` Cannot Find Native Bindings
@@ -103,8 +104,8 @@ npx -y handoff-relay status <packet-id> --db .relay/team.db --token <sender-toke
 
 Strict mode requires explicit review and a human approval token:
 
-- Ask/share packets: recipient must `view`, then `accept`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
-- Reply packets: sender must `view`, then generate an `approval-token --approval-secret <secret> --action hydrate`, then `hydrate`.
+- Ask/share packets: recipient should `relay_review_next`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
+- Reply packets: sender should `relay_review_next`, generate an `approval-token --action hydrate`, then `relay_hydrate_approved`.
 
 Invalid transitions return `INVALID_STATE_TRANSITION`.
 
@@ -145,7 +146,7 @@ If an approval secret leaks, rotate it and update your local secret manager:
 npx -y handoff-relay member rotate-approval-secret --db .relay/team.db --token <member-token> --approval-secret <current-approval-secret> --json
 ```
 
-The old approval secret stops working immediately, and unconsumed approval tokens already minted by that member are invalidated. If you no longer have the current approval secret, ask a workspace admin to revoke and reinvite the member.
+The old approval secret stops working immediately, and unconsumed approval tokens already minted by that member are invalidated. If a teammate leaves or is removed, their unconsumed approval tokens are invalidated too.
 
 ## Packet Needs More Evidence
 
@@ -157,7 +158,7 @@ npx -y handoff-relay clarify <packet-id> --db .relay/team.db --token <recipient-
 
 ## Watcher Prints Nothing
 
-The watcher only reports new packet ids once per process. Check `inbox` directly:
+The watcher reads the durable notification queue and acknowledges a notification after it is delivered locally. Check `inbox` directly:
 
 ```bash
 npx -y handoff-relay inbox --db .relay/team.db --token <token> --workspace <workspace-id>
@@ -170,6 +171,8 @@ Desktop notifications are best-effort from the local watcher process:
 - macOS uses `osascript`.
 - Linux uses `notify-send`; install your desktop notification package if it is missing.
 - Windows uses a PowerShell tray notification.
+- For profile-based setup, check the background watcher with `npx -y handoff-relay watch --status`.
+- Use `--no-desktop-notifications` when you only want terminal output.
 
 Webhook notifications require a reachable endpoint that accepts JSON POSTs:
 

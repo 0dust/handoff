@@ -71,6 +71,94 @@ describe('workspace identity and permissions', () => {
     expect(rotated.token).not.toBe(accepted.member.token);
   });
 
+  test('reuses an active pending invite when invite is rerun for the same handle', () => {
+    const { service, db } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Relay Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const first = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'Alice',
+    });
+    const rerun = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: '@alice',
+    });
+
+    expect(rerun.invite.id).toBe(first.invite.id);
+    expect(rerun.invite.token).toBe(first.invite.token);
+
+    db.prepare('UPDATE invites SET expires_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 60_000).toISOString(),
+      first.invite.id,
+    );
+    const afterExpiry = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+
+    expect(afterExpiry.invite.id).not.toBe(first.invite.id);
+    expect(afterExpiry.invite.token).not.toBe(first.invite.token);
+  });
+
+  test('accept invite can be retried with the same idempotency key', () => {
+    const { service, db } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Relay Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+
+    const first = service.acceptInvite({
+      displayName: 'Alice',
+      idempotencyKey: 'join-attempt-1',
+      inviteToken: invite.invite.token,
+    });
+    const retry = service.acceptInvite({
+      displayName: 'Alice',
+      idempotencyKey: 'join-attempt-1',
+      inviteToken: invite.invite.token,
+    });
+
+    expect(retry.member.id).toBe(first.member.id);
+    expect(retry.member.token).not.toBe(first.member.token);
+    expect(() =>
+      service.acceptInvite({
+        displayName: 'Alice',
+        idempotencyKey: 'different-attempt',
+        inviteToken: invite.invite.token,
+      }),
+    ).toThrow(/already been accepted/i);
+    expect(
+      service.listMembers({
+        authToken: retry.member.token,
+        workspaceId: workspace.workspace.id,
+      }),
+    ).toHaveLength(2);
+
+    db.prepare('UPDATE invites SET accepted_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      invite.invite.id,
+    );
+    expect(() =>
+      service.acceptInvite({
+        displayName: 'Alice',
+        idempotencyKey: 'join-attempt-1',
+        inviteToken: invite.invite.token,
+      }),
+    ).toThrow(/already been accepted/i);
+  });
+
   test('allows members and recipients with handles that begin with digits', () => {
     const { service } = createService();
     const workspace = service.createWorkspace({
@@ -128,6 +216,88 @@ describe('workspace identity and permissions', () => {
         workspaceId: workspace.workspace.id,
       }),
     ).toThrow(/revoked/i);
+  });
+
+  test('members can leave a workspace and rerun leave without changing the revoked record', async () => {
+    const { service, db, workspace, alice } = await createTwoMembers();
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Can you inspect auth refresh?',
+      title: 'Auth refresh',
+      summary: 'Refresh returns 401.',
+      sourceClient: 'codex',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }),
+    });
+    service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+    service.acceptPacket({ authToken: alice.member.token, packetId: draft.id });
+    service.createApprovalToken({
+      authToken: alice.member.token,
+      approvalSecret: alice.member.approval_secret,
+      packetId: draft.id,
+      action: 'hydrate',
+    });
+
+    const first = service.leaveWorkspace({
+      authToken: alice.member.token,
+      workspaceId: workspace.workspace.id,
+    });
+    const second = service.leaveWorkspace({
+      authToken: alice.member.token,
+      workspaceId: workspace.workspace.id,
+    });
+
+    expect(first.alreadyRemoved).toBe(false);
+    expect(second.alreadyRemoved).toBe(true);
+    expect(second.member.status).toBe('revoked');
+    expect(second.member.revoked_at).toBe(first.member.revoked_at);
+    expect(() =>
+      service.listInbox({ authToken: alice.member.token, workspaceId: workspace.workspace.id }),
+    ).toThrow(/revoked/i);
+    expect(
+      db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM approval_tokens WHERE actor_member_id = ? AND consumed_at IS NULL',
+        )
+        .get(alice.member.id),
+    ).toEqual({ count: 0 });
+  });
+
+  test('admins remove members by handle idempotently without revoking themselves', async () => {
+    const { service, workspace, alice } = await createTwoMembers();
+
+    const first = service.removeMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      member: '@alice',
+    });
+    const second = service.removeMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      member: alice.member.id,
+    });
+
+    expect(first.member.id).toBe(alice.member.id);
+    expect(first.alreadyRemoved).toBe(false);
+    expect(second.alreadyRemoved).toBe(true);
+    expect(second.member.revoked_at).toBe(first.member.revoked_at);
+    expect(() =>
+      service.removeMember({
+        adminToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        member: workspace.admin.id,
+      }),
+    ).toThrow(/cannot remove themselves/i);
   });
 
   test('recipients cannot read packets not addressed to them and search respects permissions', async () => {
@@ -377,6 +547,64 @@ describe('two-user ask/share flows', () => {
 
     expect(hydrated.context).toContain('auth middleware');
     expect(archived.packet.status).toBe('archived');
+    expect(
+      service.listNotifications({
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      }),
+    ).toEqual([]);
+  });
+
+  test('lists and acknowledges durable notifications without duplicate rows', async () => {
+    const { service, workspace, alice } = await createTwoMembers();
+    const draft = service.createShareDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      finding: 'The auth middleware retry path skips refresh persistence.',
+      title: 'Auth middleware finding',
+      summary: 'Patch retry persistence before the second request.',
+      sourceClient: 'codex',
+    });
+
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }),
+    });
+    const notifications = service.listNotifications({
+      authToken: alice.member.token,
+      workspaceId: workspace.workspace.id,
+    });
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      packet_id: draft.id,
+      sender_handle: 'sam',
+      title: 'Auth middleware finding',
+    });
+
+    const acked = service.ackNotification({
+      authToken: alice.member.token,
+      notificationId: notifications[0].notification_id,
+    });
+    const ackedAgain = service.ackNotification({
+      authToken: alice.member.token,
+      notificationId: notifications[0].notification_id,
+    });
+
+    expect(acked.notification.status).toBe('read');
+    expect(ackedAgain.notification.read_at).toBe(acked.notification.read_at);
+    expect(
+      service.listNotifications({
+        authToken: alice.member.token,
+        workspaceId: workspace.workspace.id,
+      }),
+    ).toEqual([]);
   });
 
   test('supports clarification and decline without hydration', async () => {

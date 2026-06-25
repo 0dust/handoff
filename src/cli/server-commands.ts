@@ -22,6 +22,7 @@ export function registerServerCommands(
   addCommonOptions(
     server
       .command('start')
+      .description('Run the coordination API server in the foreground')
       .option('--host <host>', 'Host', '127.0.0.1')
       .option('--port <port>', 'Port', '3737'),
   ).action(async (options: CommonOptions & { host: string; port: string }) => {
@@ -53,6 +54,7 @@ export function registerServerCommands(
   addCommonOptions(
     server
       .command('mcp')
+      .description('Run the stdio MCP server for a profile or explicit auth')
       .option('--profile <name>', 'Use a stored Handoff profile')
       .option(
         '--agent-approvals',

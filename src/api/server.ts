@@ -100,8 +100,19 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
 
   app.post('/invites/:inviteToken/accept', async (request) => {
     const params = z.object({ inviteToken: z.string() }).parse(request.params);
-    const body = z.object({ displayName: z.string() }).parse(request.body);
-    return service.acceptInvite({ inviteToken: params.inviteToken, displayName: body.displayName });
+    const body = z
+      .object({ displayName: z.string(), idempotencyKey: z.string().optional() })
+      .parse(request.body);
+    return service.acceptInvite({
+      inviteToken: params.inviteToken,
+      displayName: body.displayName,
+      idempotencyKey: body.idempotencyKey,
+    });
+  });
+
+  app.get('/invites/:inviteToken', async (request) => {
+    const params = z.object({ inviteToken: z.string() }).parse(request.params);
+    return service.getInvite({ inviteToken: params.inviteToken });
   });
 
   app.get('/invite/:inviteToken', async (request, reply) => {
@@ -168,6 +179,23 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
       adminToken: bearer(request),
       workspaceId: body.workspaceId,
       memberId: params.memberId,
+    });
+  });
+
+  app.post('/members/remove', async (request) => {
+    const body = z.object({ workspaceId: z.string(), member: z.string() }).parse(request.body);
+    return service.removeMember({
+      adminToken: bearer(request),
+      workspaceId: body.workspaceId,
+      member: body.member,
+    });
+  });
+
+  app.post('/members/me/leave', async (request) => {
+    const body = z.object({ workspaceId: z.string() }).parse(request.body);
+    return service.leaveWorkspace({
+      authToken: bearer(request),
+      workspaceId: body.workspaceId,
     });
   });
 
@@ -317,6 +345,22 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   app.get('/inbox', async (request) => {
     const query = z.object({ workspaceId: z.string() }).parse(request.query);
     return service.listInbox({ authToken: bearer(request), workspaceId: query.workspaceId });
+  });
+
+  app.get('/notifications', async (request) => {
+    const query = z.object({ workspaceId: z.string() }).parse(request.query);
+    return service.listNotifications({
+      authToken: bearer(request),
+      workspaceId: query.workspaceId,
+    });
+  });
+
+  app.post('/notifications/:notificationId/ack', async (request) => {
+    const params = z.object({ notificationId: z.string() }).parse(request.params);
+    return service.ackNotification({
+      authToken: bearer(request),
+      notificationId: params.notificationId,
+    });
   });
 
   app.get('/packets/:packetId/view', async (request) => {

@@ -18,6 +18,7 @@
   </p>
 
   <p>
+    <a href="#quick-start">Quick start</a> |
     <a href="#mental-model">Mental model</a> |
     <a href="#team-setup">Team setup</a> |
     <a href="#agent-setup">Agent setup</a> |
@@ -40,6 +41,36 @@ Alice's Codex session
   -> Bob reviews and approves hydration
   -> Bob's agent continues with bounded context
 ```
+
+## Quick Start
+
+Most people need one setup command and one notification command.
+
+Host/admin on the machine that will host the workspace:
+
+```bash
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay watch --background
+```
+
+Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
+
+Add more teammates later with `invite`:
+
+```bash
+npx -y handoff-relay invite bob
+```
+
+Rerunning `start --invite alice` or `invite alice` before Alice joins reprints the same active invite instead of creating a confusing duplicate.
+
+Each teammate runs the join command from their invite:
+
+```bash
+npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay watch --background
+```
+
+After that, use Handoff inside the agent. The sender path is `relay_share` or `relay_ask` -> human review -> `relay_send_approved`. The recipient path is `relay_review_next` -> human review -> `relay_hydrate_approved`.
 
 ## Mental Model
 
@@ -72,7 +103,8 @@ Pick the machine that will host Handoff. For a small team this can be a teammate
 On the host:
 
 ```bash
-npx -y handoff-relay start --lan
+npx -y handoff-relay start --lan --install-mcp codex --invite alice --invite bob
+npx -y handoff-relay watch --background
 ```
 
 This creates:
@@ -82,6 +114,8 @@ This creates:
 - the SQLite coordination database
 - a reachable server URL for teammates on the network
 - a local profile for the host
+- an MCP config when `--install-mcp codex`, `--install-mcp claude`, or `--install-mcp cursor` is used
+- desktop/webhook-ready notification watching with `watch --background`
 
 Check it:
 
@@ -89,23 +123,19 @@ Check it:
 npx -y handoff-relay doctor
 ```
 
-If the host also wants to use Handoff from Codex or Cursor, install MCP during start:
+If the host uses Cursor instead of Codex:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-# or
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 ```
 
 Claude Code setup is shown in [Agent setup](#agent-setup).
 
-### 2. Invite Teammates
+### 2. Invite More Teammates
 
-The host/admin creates one invite per teammate:
+Use `--invite <handle>` during `start` for the people you already know. Add more teammates later with:
 
 ```bash
-npx -y handoff-relay invite alice
-npx -y handoff-relay invite bob
 npx -y handoff-relay invite priya
 ```
 
@@ -116,16 +146,15 @@ Each invite prints a `join` command. Send each person their own command.
 Each teammate runs their invite command on their own machine:
 
 ```bash
-npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token>
+npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
+npx -y handoff-relay watch --background
 ```
 
-This creates the teammate's local profile and stores their member credentials. It does not replace MCP setup. The teammate still needs their coding agent connected to Handoff.
+This creates the teammate's local profile, stores member credentials, wires MCP for Codex, and starts visible packet notifications.
 
-Members using Codex or Cursor can install MCP while joining:
+Members using Cursor can swap the MCP install flag:
 
 ```bash
-npx -y handoff-relay join <invite-link> --install-mcp codex
-# or
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
@@ -147,7 +176,7 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Codex
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 
 # teammate joining with Codex
 npx -y handoff-relay join <invite-link> --install-mcp codex
@@ -168,20 +197,17 @@ More detail: [docs/codex-setup.md](docs/codex-setup.md).
 
 ### Claude Code
 
-Handoff prints the profile-backed MCP command after `start` or `join`:
+Install automatically when hosting or joining:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+# host/admin who also uses Claude Code
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
+
+# teammate joining with Claude Code
+npx -y handoff-relay join <invite-link> --install-mcp claude
 ```
 
-Add it to Claude Code:
-
-```bash
-claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
-```
-
-Or use MCP JSON:
+The user-scoped Claude Code entry is written to `~/.claude.json` and looks like:
 
 ```json
 {
@@ -202,7 +228,7 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Cursor
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 
 # teammate joining with Cursor
 npx -y handoff-relay join <invite-link> --install-mcp cursor
@@ -240,13 +266,13 @@ Then use `node /path/to/handoff/dist/cli.js` anywhere the examples say `npx -y h
 Set up Handoff as the host/admin for my team.
 
 1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
-2. Start a reachable team workspace with `start --lan`.
-3. If I use Codex, install MCP with `start --lan --install-mcp codex`.
-   If I use Cursor, install MCP with `start --lan --install-mcp cursor`.
-   If I use Claude Code, show me the `claude mcp add-json` command.
-4. Invite each teammate I name and give me their exact join commands.
-5. Run `doctor`.
-6. Confirm whether my coding agent can see the Handoff MCP tools. Do not call setup complete until MCP is wired.
+2. Start a reachable team workspace with `start --lan --install-mcp codex --invite <teammate>`, repeating `--invite` for each teammate I name.
+3. If I use Cursor, use `start --lan --install-mcp cursor --invite <teammate>` instead.
+   If I use Claude Code, use `start --lan --install-mcp claude --invite <teammate>` instead.
+4. Start packet notifications with `watch --background`.
+5. Give me the exact join command printed for each teammate.
+6. Run `doctor`.
+7. Confirm whether my coding agent can see `relay_share`, `relay_send_approved`, `relay_review_next`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```
 
 ### Member Prompt
@@ -255,56 +281,56 @@ Set up Handoff as the host/admin for my team.
 Set up my machine as a Handoff team member.
 
 1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
-2. Run the join command my teammate sent me.
-3. If I use Codex, add `--install-mcp codex` to the join command.
-   If I use Cursor, add `--install-mcp cursor` to the join command.
-   If I use Claude Code, show me the `claude mcp add-json` command after join succeeds.
-4. Run `doctor`.
-5. Confirm whether my coding agent can see the Handoff MCP tools. Do not call setup complete until MCP is wired.
+2. Run the join command my teammate sent me with `--install-mcp codex`.
+3. If I use Cursor, use `--install-mcp cursor` instead.
+   If I use Claude Code, use `--install-mcp claude` instead.
+4. Start packet notifications with `watch --background`.
+5. Run `doctor`.
+6. Confirm whether my coding agent can see `relay_review_next` and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```
 
 ## Using Handoff
 
 The human talks to their coding agent. The agent uses Handoff MCP tools.
 
-Sender:
+Sender prompt:
 
 ```text
 Use Handoff to package this investigation for @bob.
 Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Show me the Relay Packet before sending.
+Draft with relay_share or relay_ask. Show me the Relay Packet and redaction report before sending.
+If I approve, call relay_send_approved.
 ```
 
-Recipient:
+Recipient prompt:
 
 ```text
 Use Handoff to check my inbox.
-Show me the packet before hydration.
-Wait for my approval before calling relay_hydrate.
+Call relay_review_next, then show me the Relay Packet and redaction report.
+If I approve, call relay_hydrate_approved.
 ```
 
-Handoff MCP tools include:
+Start notifications in the background:
 
-| Tool                            | Purpose                                                                           |
-| ------------------------------- | --------------------------------------------------------------------------------- |
-| `relay_share`                   | Draft a handoff packet with selected context, findings, evidence, and next steps. |
-| `relay_ask`                     | Draft a handoff packet that includes a question for the recipient.                |
-| `relay_update_draft`            | Edit a draft before sender approval.                                              |
-| `relay_approve`                 | Send a packet or approve a reply after human review.                              |
-| `relay_inbox`                   | List packets addressed to the current member.                                     |
-| `relay_status`                  | Fetch the latest readable packet status.                                          |
-| `relay_view`                    | Record that a packet was opened for review.                                       |
-| `relay_accept`                  | Accept a packet before hydration.                                                 |
-| `relay_hydrate`                 | Return bounded context and record a hydration receipt.                            |
-| `relay_reply`                   | Draft a reply packet.                                                             |
-| `relay_clarify`                 | Request missing evidence or context.                                              |
-| `relay_decline`                 | Decline an addressed packet.                                                      |
-| `relay_archive`                 | Archive a readable packet.                                                        |
-| `relay_search`                  | Search permitted packet history without hydrating results.                        |
-| `relay_history`                 | List drafts, sent packets, open work, or closed packets.                          |
-| `relay_audit`                   | List packet or workspace audit receipts.                                          |
-| `relay_configure_project_alias` | Map a repo or clone alias to a canonical project.                                 |
-| `relay_project_aliases`         | List configured project aliases.                                                  |
+```bash
+npx -y handoff-relay watch --background
+```
+
+Use `npx -y handoff-relay watch --status` or `npx -y handoff-relay watch --stop` to inspect or stop the recorded watcher. For scripts and debugging, plain `watch` still runs in the foreground.
+
+Handoff MCP tools are grouped by workflow:
+
+| Workflow | Tools                                                                          |
+| -------- | ------------------------------------------------------------------------------ |
+| Send     | `relay_share`, `relay_ask`, `relay_update_draft`, `relay_send_approved`        |
+| Receive  | `relay_review_next`, `relay_hydrate_approved`, `relay_inbox`, `relay_review`   |
+| Fallback | `relay_status`, `relay_view`, `relay_accept`, `relay_hydrate`, `relay_approve` |
+| Reply    | `relay_reply`, `relay_send_approved`                                           |
+| Triage   | `relay_clarify`, `relay_decline`, `relay_archive`                              |
+| Search   | `relay_search`, `relay_history`, `relay_audit`                                 |
+| Admin    | `relay_configure_project_alias`, `relay_project_aliases`                       |
+
+The fallback tools are still available for automation and compatibility. New agents should prefer the send and receive recipes above.
 
 ## Approval Flow
 
@@ -328,7 +354,7 @@ Agent-confirmed mode is optional for profile-backed MCP sessions. Start MCP with
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-In that mode, your agent may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
+In that mode, your agent may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
 
 ## Packet Shape
 
@@ -380,6 +406,25 @@ npx -y handoff-relay server start \
 
 See [Local self-hosting](docs/local-self-hosting.md) and [Advanced manual setup](docs/advanced-manual-setup.md).
 
+## Leaving Or Removing Members
+
+Members can leave from their own machine:
+
+```bash
+npx -y handoff-relay leave
+```
+
+The command revokes the member server-side first, then removes the local profile and credentials. If it is interrupted after the server revoke, rerunning `leave` finishes local cleanup.
+
+Hosts/admins can remove a teammate by handle or member id:
+
+```bash
+npx -y handoff-relay remove-member alice
+npx -y handoff-relay remove-member mem_...
+```
+
+Removal is a soft revoke, so historical packets and audit receipts keep their member references. Re-running the command is safe and does not change the original removal time.
+
 ## Commands Are Support Plumbing
 
 The CLI exists for setup, invites, admin operations, approval tokens, health checks, and automation. Normal teammate handoff should happen through MCP tools inside the coding agent.
@@ -390,12 +435,14 @@ Common operational commands:
 handoff start
 handoff invite
 handoff join
+handoff leave
+handoff remove-member <handle-or-id>
 handoff doctor
 handoff server status
 handoff server stop
 handoff server mcp
 handoff approval-token
-handoff watch
+handoff watch --background
 ```
 
 ## Docs

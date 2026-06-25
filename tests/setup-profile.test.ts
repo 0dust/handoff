@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -20,6 +21,7 @@ import {
   createBackendForProfile,
   createInviteForProfile,
   joinInvite,
+  removeWorkspaceMember,
   startHandoffSetup,
 } from '../src/setup/orchestrator.js';
 import { runDoctorChecks } from '../src/setup/doctor.js';
@@ -390,10 +392,13 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     store.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
 
     const invite = await createInviteForProfile({ home, handle: 'alice' });
+    const rerun = await createInviteForProfile({ home, handle: '@alice' });
     const credentials = store.loadCredentials('default');
 
     expect(invite.joinCommand).toMatch(/^npx -y handoff-relay join http:\/\/127\.0\.0\.1:/);
     expect(parseInviteLink(invite.inviteLink).inviteToken).toMatch(/^relay_invite_/);
+    expect(rerun.joinCommand).toBe(invite.joinCommand);
+    expect(rerun.inviteLink).toBe(invite.inviteLink);
     expect(invite.expiresAt).toBeTruthy();
     expect(JSON.stringify(invite)).not.toContain(credentials.memberToken);
     expect(JSON.stringify(invite)).not.toContain(credentials.approvalSecret);
@@ -435,6 +440,367 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(inbox).toEqual([]);
   });
 
+  test('CLI join can install Claude Code MCP config explicitly', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    const previousHome = process.env.HANDOFF_HOME;
+    const previousUserHome = process.env.HOME;
+    process.env.HANDOFF_HOME = aliceHome;
+    process.env.HOME = aliceHome;
+    try {
+      const result = await runCli(['join', invite.inviteLink, '--install-mcp', 'claude', '--json']);
+      const parsed = JSON.parse(result.stdout);
+      const config = JSON.parse(readFileSync(join(aliceHome, '.claude.json'), 'utf8'));
+
+      expect(result.code).toBe(0);
+      expect(parsed.mcp.status).toBe('installed');
+      expect(parsed.mcp.configs).toContainEqual(
+        expect.objectContaining({ client: 'claude-code', installed: true }),
+      );
+      expect(config.mcpServers.handoff.args).toEqual([
+        '-y',
+        'handoff-relay',
+        'server',
+        'mcp',
+        '--profile',
+        'default',
+      ]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHome;
+      if (previousUserHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousUserHome;
+    }
+  });
+
+  test('join is safe to rerun after the profile already exists', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+
+    const first = await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const retry = await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+
+    expect(retry.profile.memberId).toBe(first.profile.memberId);
+    expect(retry.profile.workspaceId).toBe(first.profile.workspaceId);
+    expect(retry.nextAgentInstruction).toContain('handoff watch --background');
+  });
+
+  test('join rerun can finish MCP install after the profile already exists', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const retry = await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      installMcpClient: 'claude-code',
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const config = JSON.parse(readFileSync(join(aliceHome, '.claude.json'), 'utf8'));
+
+    expect(retry.mcp.status).toBe('installed');
+    expect(config.mcpServers.handoff.args).toEqual([
+      '-y',
+      'handoff-relay',
+      'server',
+      'mcp',
+      '--profile',
+      'default',
+    ]);
+  });
+
+  test('join rejects a different invite when the target profile is already joined', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const aliceInvite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    const bobInvite = await createInviteForProfile({ home: hostHome, handle: 'bob' });
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: aliceInvite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+
+    await expect(
+      joinInvite({
+        home: aliceHome,
+        env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+        invite: bobInvite.inviteLink,
+        displayName: 'Bob Recipient',
+      }),
+    ).rejects.toThrow(/already joined as @alice/i);
+  });
+
+  test('join recovers a pending attempt after remote invite acceptance but before local save', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    const aliceStore = createProfileStore({ home: aliceHome });
+    const idempotencyKey = 'relay_join_resume_test';
+    aliceStore.savePendingJoinAttempt({
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      displayName: 'Alice Recipient',
+      idempotencyKey,
+      invite: invite.inviteLink,
+      profileName: 'default',
+      serverUrl,
+    });
+    const client = new RelayApiClient({ serverUrl });
+    const parsedInvite = parseInviteLink(invite.inviteLink);
+    const accepted = await client.acceptInvite({
+      displayName: 'Alice Recipient',
+      idempotencyKey,
+      inviteToken: parsedInvite.inviteToken,
+    });
+    aliceStore.saveProfile({
+      schemaVersion: 1,
+      profileName: 'default',
+      workspaceId: accepted.workspace.id,
+      workspaceName: accepted.workspace.name,
+      memberId: accepted.member.id,
+      handle: accepted.member.handle,
+      displayName: accepted.member.display_name,
+      role: accepted.member.role,
+      serverUrl,
+      serverMode: 'remote',
+      createdAt: new Date().toISOString(),
+      lastVerifiedAt: new Date().toISOString(),
+    });
+
+    const joined = await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const credentials = aliceStore.loadCredentials('default');
+
+    expect(aliceStore.credentialsExist('default')).toBe(true);
+    expect(joined.profile.memberId).toBe(accepted.member.id);
+    expect(aliceStore.loadPendingJoinAttempt('default')).toBeUndefined();
+    await expect(
+      joined.backend.listInbox({
+        authToken: credentials.memberToken,
+        workspaceId: joined.profile.workspaceId,
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  test('leave revokes the joined member and removes local profile credentials', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = aliceHome;
+      process.env.HANDOFF_HOME = aliceHome;
+
+      const first = await runCli(['leave']);
+      const second = await runCli(['leave']);
+
+      const aliceStore = createProfileStore({ home: aliceHome });
+      expect(first.code).toBe(0);
+      expect(first.stdout).toContain('Left Handoff workspace');
+      expect(second.code).toBe(0);
+      expect(second.stdout).toContain('No active Handoff profile');
+      expect(aliceStore.loadProfile('default')).toBeUndefined();
+      expect(aliceStore.credentialsExist('default')).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('remove-member removes teammates by handle and is safe to retry', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = hostHome;
+      process.env.HANDOFF_HOME = hostHome;
+
+      const first = await runCli(['remove-member', 'alice']);
+      const second = await runCli(['remove-member', '@alice']);
+
+      expect(first.code).toBe(0);
+      expect(first.stdout).toContain('Removed @alice');
+      expect(second.code).toBe(0);
+      expect(second.stdout).toContain('@alice is already removed');
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('leave cleans local profile after an admin already removed the member', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    await removeWorkspaceMember({ home: hostHome, member: 'alice' });
+
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = aliceHome;
+      process.env.HANDOFF_HOME = aliceHome;
+
+      const result = await runCli(['leave']);
+      const aliceStore = createProfileStore({ home: aliceHome });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Left Handoff workspace');
+      expect(aliceStore.loadProfile('default')).toBeUndefined();
+      expect(aliceStore.credentialsExist('default')).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('leave fails closed when local credentials are missing', async () => {
+    const hostHome = tempHome();
+    const aliceHome = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: hostHome, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const hostStore = createProfileStore({ home: hostHome });
+    hostStore.saveProfile({ ...started.profile, serverUrl, publicInviteBaseUrl: serverUrl });
+    const invite = await createInviteForProfile({ home: hostHome, handle: 'alice' });
+    await joinInvite({
+      home: aliceHome,
+      env: { HANDOFF_HOME: aliceHome, HOME: aliceHome },
+      invite: invite.inviteLink,
+      displayName: 'Alice Recipient',
+    });
+    const aliceStore = createProfileStore({ home: aliceHome });
+    rmSync(aliceStore.credentialPath('default'), { force: true });
+
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    try {
+      process.env.HOME = aliceHome;
+      process.env.HANDOFF_HOME = aliceHome;
+
+      const result = await runCli(['leave']);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Missing Handoff credentials');
+      expect(aliceStore.loadProfile('default')).toBeTruthy();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
   test('CLI join output shows the profile-backed MCP command without start install hints', async () => {
     const hostHome = tempHome();
     const aliceHome = tempHome();
@@ -456,6 +822,9 @@ describe('invite, join, LAN, and doctor setup flows', () => {
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain('Command: npx -y handoff-relay server mcp --profile default');
+      expect(result.stdout).toContain('handoff-relay watch --profile default --background');
+      expect(result.stdout).not.toContain('--desktop-notifications');
+      expect(result.stdout).toContain('relay_review_next -> relay_hydrate_approved');
       expect(result.stdout).not.toContain('start --install-mcp');
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -727,6 +1096,60 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('port conflict handling skips wildcard listeners when binding loopback', async () => {
+    const blocker = createServer((_request, response) => {
+      response.writeHead(200).end('not handoff');
+    });
+    await new Promise<void>((resolve) => blocker.listen(0, '0.0.0.0', resolve));
+    const address = blocker.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected TCP server address');
+    }
+    try {
+      const selected = await findAvailablePort({
+        host: '127.0.0.1',
+        preferredPort: address.port,
+      });
+      expect(selected).not.toBe(address.port);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  test('readiness polling rejects a different Handoff server identity', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/health') {
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            name: 'handoff',
+            ok: true,
+            pid: process.pid,
+            server_id: 'srv_other',
+            version: 'test',
+          }),
+        );
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected TCP server address');
+    }
+    try {
+      await expect(
+        waitForHandoffServer(`http://127.0.0.1:${address.port}`, {
+          expectedServerId: 'srv_expected',
+          intervalMs: 25,
+          timeoutMs: 100,
+        }),
+      ).resolves.toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test('readiness polling respects the overall timeout when health responses hang', async () => {
     const server = createServer((request, response) => {
       if (request.url === '/health') {
@@ -961,6 +1384,41 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI start --invite creates initial invites and reuses them on rerun', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      const first = await runCli(['start', '--invite', 'alice', '--json']);
+      const second = await runCli(['start', '--invite', '@alice', '--json']);
+      const human = await runCli(['start', '--invite', 'alice']);
+
+      expect(first.code).toBe(0);
+      expect(second.code).toBe(0);
+      expect(human.code).toBe(0);
+
+      const firstParsed = JSON.parse(first.stdout);
+      const secondParsed = JSON.parse(second.stdout);
+
+      expect(firstParsed.invites).toHaveLength(1);
+      expect(firstParsed.invites[0]).toMatchObject({
+        handle: 'alice',
+        joinCommand: expect.stringContaining('npx -y handoff-relay join '),
+      });
+      expect(secondParsed.invites[0].inviteLink).toBe(firstParsed.invites[0].inviteLink);
+      expect(secondParsed.invites[0].joinCommand).toBe(firstParsed.invites[0].joinCommand);
+      expect(human.stdout).toContain('Warning: This invite link is loopback-only.');
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
   test('CLI start can install Codex MCP config explicitly', async () => {
     const home = tempHome();
     const previousHome = process.env.HANDOFF_HOME;
@@ -978,6 +1436,36 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(config).toContain('handoff-relay');
       expect(config).toContain('--profile');
       expect(config).toContain('default');
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previousHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHome;
+      if (previousUserHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousUserHome;
+    }
+  });
+
+  test('CLI start can install Claude Code MCP config explicitly', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HANDOFF_HOME;
+    const previousUserHome = process.env.HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      const result = await runCli(['start', '--install-mcp', 'claude', '--json']);
+      const config = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.mcp.status).toBe('installed');
+      expect(parsed.mcp.configs).toContainEqual(
+        expect.objectContaining({ client: 'claude-code', installed: true }),
+      );
+      expect(config.mcpServers.handoff).toEqual({
+        command: 'npx',
+        args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+      });
     } finally {
       delete process.env.HANDOFF_TEST_SKIP_SERVER;
       if (previousHome === undefined) delete process.env.HANDOFF_HOME;
@@ -1021,6 +1509,73 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     );
     expect(config).not.toContain('--explicit-auth');
     expect(config).toContain('[mcp_servers.other]');
+  });
+
+  test('Claude Code MCP install preserves unrelated user config and replaces legacy Handoff entry', () => {
+    const home = tempHome();
+    const configPath = join(home, '.claude.json');
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          theme: 'dark',
+          mcpServers: {
+            handoff: {
+              command: 'npx',
+              args: ['-y', 'handoff-relay', 'server', 'mcp', '--explicit-auth'],
+            },
+            github: {
+              command: 'gh',
+              args: ['mcp', 'server'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const status = installMcpConfig({
+      client: 'claude-code',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+    expect(status).toMatchObject({ client: 'claude-code', installed: true });
+    expect(config.theme).toBe('dark');
+    expect(config.mcpServers.github).toEqual({ command: 'gh', args: ['mcp', 'server'] });
+    expect(config.mcpServers.handoff).toEqual({
+      command: 'npx',
+      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+    });
+  });
+
+  test('Claude Code MCP install backs up malformed JSON config and writes a valid entry', () => {
+    const home = tempHome();
+    const configPath = join(home, '.claude.json');
+    const malformed = '{ "mcpServers": {';
+    writeFileSync(configPath, malformed);
+
+    const status = installMcpConfig({
+      client: 'claude-code',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const rerun = installMcpConfig({
+      client: 'claude-code',
+      env: { HOME: home },
+      profileName: 'default',
+    });
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+    expect(status).toMatchObject({ client: 'claude-code', installed: true });
+    expect(rerun).toMatchObject({ client: 'claude-code', installed: true });
+    expect(readFileSync(`${configPath}.handoff-backup`, 'utf8')).toBe(malformed);
+    expect(config.mcpServers.handoff).toEqual({
+      command: 'npx',
+      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+    });
   });
 
   test('JSON MCP detection ignores explicit-auth on unrelated servers', () => {

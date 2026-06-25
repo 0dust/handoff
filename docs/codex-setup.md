@@ -7,16 +7,15 @@ Handoff runs as a local stdio MCP server beside each user's Codex session. The s
 On Sam's machine, host a LAN-reachable workspace and install the Codex MCP entry:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay invite alice
-npx -y handoff-relay doctor
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay watch --background
 ```
 
 On Alice's machine, run the invite command Sam sends her:
 
 ```bash
 npx -y handoff-relay join http://<sam-lan-ip>:3737/invite/<invite-token> --install-mcp codex
-npx -y handoff-relay doctor
+npx -y handoff-relay watch --background
 ```
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and wires Codex when `--install-mcp codex` is present.
@@ -28,8 +27,7 @@ If Alice is not on the same network, host Handoff behind a reachable URL and use
 For a same-machine demo or CI smoke test, use loopback-only setup:
 
 ```bash
-npx -y handoff-relay start --install-mcp codex
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --install-mcp codex --invite alice
 ```
 
 ## Add Handoff To Codex
@@ -56,14 +54,16 @@ In Codex, use `/mcp` to inspect active MCP servers.
 ```text
 Use Handoff to package the current investigation context for @alice.
 Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Show me the Relay Packet and redaction report before sending.
+Draft with relay_share or relay_ask. Show me the Relay Packet and redaction report before sending.
+If I approve, call relay_send_approved.
 ```
 
 Recipient flow:
 
 ```text
-Use Handoff to check my inbox. Show me any Relay Packet before hydration.
-Wait for my approval before calling relay_hydrate.
+Use Handoff to check my inbox.
+Call relay_review_next and show me the Relay Packet and redaction report before hydration.
+If I approve, call relay_hydrate_approved.
 ```
 
 Strict approval tokens are generated outside MCP:
@@ -86,7 +86,7 @@ tool_timeout_sec = 60
 enabled = true
 ```
 
-With that flag, Codex may call `relay_approve` or `relay_hydrate` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Codex config and tool schemas.
+With that flag, Codex may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Codex config and tool schemas.
 
 ## Remote Or Self-Hosted
 

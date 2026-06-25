@@ -73,7 +73,9 @@ Receipts are recorded for:
 - `archive`
 - `close`
 - `configure_project_alias`
+- `leave`
 - `revoke`
+- `reissue_invite_credentials`
 - `rotate_token`
 - `rotate_approval_secret`
 - `search`

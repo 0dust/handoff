@@ -20,8 +20,13 @@ import {
   type CommonOptions,
 } from './cli/shared.js';
 import { isRelayError } from './errors.js';
+import {
+  inspectBackgroundNotificationWatcher,
+  startBackgroundNotificationWatcher,
+  stopBackgroundNotificationWatcher,
+  type BackgroundNotificationWatcherMetadata,
+} from './notification-watch-lifecycle.js';
 import { createNotificationDispatcher, createPollingWatcher } from './notifications.js';
-import type { RelayPacket } from './protocol/schema.js';
 import { runtimeVersion } from './runtime/version.js';
 import { createBackendForProfile } from './setup/orchestrator.js';
 import { createProfileStore, resolveProfileName } from './setup/profile.js';
@@ -155,6 +160,7 @@ function parseListOption(value: string | undefined): string[] | undefined {
 
 function addAuthOptions(command: Command): Command {
   return addCommonOptions(command)
+    .option('--profile <name>', 'Profile name')
     .option('--token <token>', 'Relay member token')
     .option('--workspace <workspaceId>', 'Relay workspace id');
 }
@@ -201,6 +207,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     workspace
       .command('create')
+      .description('Create a workspace and first admin member')
       .requiredOption('--name <name>', 'Workspace name')
       .requiredOption('--handle <handle>', 'Admin handle')
       .requiredOption('--display-name <name>', 'Admin display name'),
@@ -221,6 +228,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     workspaceAlias
       .command('set')
+      .description('Map a repo alias to a canonical project name')
       .requiredOption('--canonical <project>', 'Canonical project/repo name')
       .requiredOption('--alias <project>', 'Alias project/repo name'),
   ).action(async (options: CommonOptions & { canonical: string; alias: string }) => {
@@ -234,7 +242,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     closeBackend(auth.backend);
     write(io, result, options.json);
   });
-  addAuthOptions(workspaceAlias.command('list')).action(async (options: CommonOptions) => {
+  addAuthOptions(
+    workspaceAlias.command('list').description('List configured project aliases'),
+  ).action(async (options: CommonOptions) => {
     const auth = createAuthContext(options);
     const result = await auth.backend.listProjectAliases({
       authToken: auth.authToken,
@@ -246,7 +256,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
 
   const member = program.command('member').description('Workspace member flows');
   addAuthOptions(
-    member.command('invite').requiredOption('--handle <handle>', 'Handle to invite'),
+    member
+      .command('invite')
+      .description('Create an invite for a teammate handle')
+      .requiredOption('--handle <handle>', 'Handle to invite'),
   ).action(async (options: CommonOptions & { handle: string }) => {
     const auth = createAuthContext(options);
     const result = await auth.backend.inviteMember({
@@ -260,6 +273,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     member
       .command('accept')
+      .description('Accept a raw invite token into a member account')
       .requiredOption('--invite <token>', 'Invite token')
       .requiredOption('--display-name <name>', 'Display name'),
   ).action(async (options: CommonOptions & { invite: string; displayName: string }) => {
@@ -271,17 +285,22 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     closeBackend(service);
     write(io, result, options.json);
   });
-  addAuthOptions(member.command('list')).action(async (options: CommonOptions) => {
-    const auth = createAuthContext(options);
-    const result = await auth.backend.listMembers({
-      authToken: auth.authToken,
-      workspaceId: auth.workspaceId,
-    });
-    closeBackend(auth.backend);
-    write(io, result, options.json);
-  });
+  addAuthOptions(member.command('list').description('List workspace members')).action(
+    async (options: CommonOptions) => {
+      const auth = createAuthContext(options);
+      const result = await auth.backend.listMembers({
+        authToken: auth.authToken,
+        workspaceId: auth.workspaceId,
+      });
+      closeBackend(auth.backend);
+      write(io, result, options.json);
+    },
+  );
   addAuthOptions(
-    member.command('revoke').requiredOption('--member <memberId>', 'Member id to revoke'),
+    member
+      .command('revoke')
+      .description('Revoke a workspace member by member id')
+      .requiredOption('--member <memberId>', 'Member id to revoke'),
   ).action(async (options: CommonOptions & { member: string }) => {
     const auth = createAuthContext(options);
     const result = await auth.backend.revokeMember({
@@ -293,7 +312,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     write(io, result, options.json);
   });
   addCommonOptions(
-    member.command('rotate-token').requiredOption('--token <token>', 'Current token'),
+    member
+      .command('rotate-token')
+      .description('Rotate the current member token')
+      .requiredOption('--token <token>', 'Current token'),
   ).action(async (options: CommonOptions) => {
     const service = createBackend(options);
     const result = await service.rotateMemberToken({ authToken: options.token ?? '' });
@@ -303,6 +325,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     member
       .command('rotate-approval-secret')
+      .description('Rotate the local approval secret and invalidate unused approvals')
       .requiredOption('--token <token>', 'Current token')
       .option('--approval-secret <secret>', 'Current local approval secret'),
   ).action(async (options: CommonOptions & { approvalSecret?: string }) => {
@@ -318,6 +341,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     program
       .command('ask')
+      .description('Draft a question packet for a teammate; requires approval before sending')
       .argument('<handle>', '@handle recipient')
       .argument('<question>', 'Question to ask')
       .requiredOption('--title <title>', 'Packet title')
@@ -359,6 +383,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     program
       .command('share-with')
+      .description(
+        'Draft a context-sharing packet for a teammate; requires approval before sending',
+      )
       .argument('<handle>', '@handle recipient')
       .requiredOption('--finding <finding>', 'Finding to share')
       .requiredOption('--title <title>', 'Packet title')
@@ -400,8 +427,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('update-draft')
+      .description('Edit an ask/share draft before sender approval')
       .argument('<packetId>', 'Draft packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .option('--title <title>', 'Packet title')
       .option('--summary <summary>', 'Packet summary')
       .option('--question <question>', 'Ask question')
@@ -441,8 +469,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('approve')
+      .description('Approve and send a pending ask/share draft')
       .argument('<packetId>', 'Packet id')
-      .option('--token <token>')
+      .option('--token <token>', 'Relay member token')
       .requiredOption('--approval-token <token>', 'Human-generated approval token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
@@ -458,8 +487,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('approval-token')
-      .argument('<packetId>')
-      .option('--token <token>')
+      .description('Create a short-lived human approval token for send, reply, or hydrate')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token')
       .option('--profile <name>', 'Profile name')
       .option('--approval-secret <secret>', 'Local approval secret from workspace/member setup')
       .requiredOption('--action <action>', 'send, reply, or hydrate'),
@@ -495,18 +525,24 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     write(io, result, options.json);
   });
 
-  addAuthOptions(program.command('inbox')).action(async (options: CommonOptions) => {
-    const auth = createAuthContext(options);
-    const result = await auth.backend.listInbox({
-      authToken: auth.authToken,
-      workspaceId: auth.workspaceId,
-    });
-    closeBackend(auth.backend);
-    write(io, result, options.json);
-  });
+  addAuthOptions(program.command('inbox').description('List open packets sent to you')).action(
+    async (options: CommonOptions) => {
+      const auth = createAuthContext(options);
+      const result = await auth.backend.listInbox({
+        authToken: auth.authToken,
+        workspaceId: auth.workspaceId,
+      });
+      closeBackend(auth.backend);
+      write(io, result, options.json);
+    },
+  );
 
   addCommonOptions(
-    program.command('status').argument('<packetId>').option('--token <token>'),
+    program
+      .command('status')
+      .description('Show the current packet state and metadata')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
     const result = await auth.backend.getPacketForMember({
@@ -517,17 +553,25 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     write(io, result, options.json);
   });
 
-  addCommonOptions(program.command('view').argument('<packetId>').option('--token <token>')).action(
-    async (packetId: string, options: CommonOptions) => {
-      const auth = createAuthContext(options, { requireWorkspace: false });
-      const result = await auth.backend.viewPacket({ authToken: auth.authToken, packetId });
-      closeBackend(auth.backend);
-      write(io, result, options.json);
-    },
-  );
+  addCommonOptions(
+    program
+      .command('view')
+      .description('Mark a delivered packet as viewed and show its metadata')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token'),
+  ).action(async (packetId: string, options: CommonOptions) => {
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.viewPacket({ authToken: auth.authToken, packetId });
+    closeBackend(auth.backend);
+    write(io, result, options.json);
+  });
 
   addCommonOptions(
-    program.command('accept').argument('<packetId>').option('--token <token>'),
+    program
+      .command('accept')
+      .description('Accept a packet before replying')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token'),
   ).action(async (packetId: string, options: CommonOptions) => {
     const auth = createAuthContext(options, { requireWorkspace: false });
     const result = await auth.backend.acceptPacket({ authToken: auth.authToken, packetId });
@@ -538,8 +582,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('hydrate')
-      .argument('<packetId>')
-      .option('--token <token>')
+      .description('Generate bounded context for your agent from a reviewed packet')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token')
       .option('--client <client>', 'Client name', 'generic')
       .option('--session <sessionId>', 'Client session id')
       .requiredOption('--approval-token <token>', 'Human-generated hydration approval token'),
@@ -559,10 +604,11 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('reply')
-      .argument('<packetId>')
-      .argument('<answer>')
-      .option('--token <token>')
-      .requiredOption('--summary <summary>')
+      .description('Draft a reply to an accepted or hydrated ask packet')
+      .argument('<packetId>', 'Original ask packet id')
+      .argument('<answer>', 'Reply answer')
+      .option('--token <token>', 'Relay member token')
+      .requiredOption('--summary <summary>', 'Reply summary')
       .option('--source-client <client>', 'Source client', 'generic')
       .option('--evidence-json <json>', 'JSON array of evidence objects')
       .option('--confidence <level>', 'low, medium, or high'),
@@ -584,8 +630,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('clarify')
-      .argument('<packetId>')
-      .option('--token <token>')
+      .description('Ask the sender for missing details before accepting or hydrating')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token')
       .requiredOption('--question <question>', 'Clarification question')
       .option('--requested-evidence <items>', 'Comma-separated requested evidence labels'),
   ).action(async (packetId: string, options: CommonOptions & any) => {
@@ -604,8 +651,13 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     addCommonOptions(
       program
         .command(commandName)
-        .argument('<packetId>')
-        .option('--token <token>')
+        .description(
+          commandName === 'decline'
+            ? 'Decline a packet that should not be handled'
+            : 'Archive a packet you are done with',
+        )
+        .argument('<packetId>', 'Packet id')
+        .option('--token <token>', 'Relay member token')
         .option('--reason <reason>', 'Decline reason'),
     ).action(async (packetId: string, options: CommonOptions & { reason?: string }) => {
       const auth = createAuthContext(options, { requireWorkspace: false });
@@ -625,8 +677,9 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addCommonOptions(
     program
       .command('close')
-      .argument('<packetId>')
-      .option('--token <token>')
+      .description('Close an ask after resolution')
+      .argument('<packetId>', 'Packet id')
+      .option('--token <token>', 'Relay member token')
       .option('--resolution <resolution>', 'resolved or unresolved', 'resolved'),
   ).action(
     async (
@@ -645,7 +698,12 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   );
 
   addAuthOptions(
-    addPacketFilterOptions(program.command('search').option('--query <query>', 'Search query')),
+    addPacketFilterOptions(
+      program
+        .command('search')
+        .description('Search packets in the workspace')
+        .option('--query <query>', 'Search query'),
+    ),
   ).action(
     async (
       options: CommonOptions & {
@@ -683,6 +741,7 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
     addPacketFilterOptions(
       program
         .command('history')
+        .description('List packet history with workflow filters')
         .option('--filter <filter>', 'all, drafts, sent, open, or closed', 'all')
         .option('--query <query>', 'Search query'),
     ),
@@ -722,7 +781,10 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   );
 
   addAuthOptions(
-    program.command('audit').option('--packet <packetId>', 'Optional packet id'),
+    program
+      .command('audit')
+      .description('List audit receipts for the workspace or one packet')
+      .option('--packet <packetId>', 'Optional packet id'),
   ).action(async (options: CommonOptions & { packet?: string }) => {
     const auth = createAuthContext(options);
     const result = await auth.backend.listAuditReceipts({
@@ -737,9 +799,14 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   addAuthOptions(
     program
       .command('watch')
+      .description('Poll packet notifications; desktop notifications are enabled by default')
       .option('--interval <ms>', 'Polling interval in ms', '5000')
       .option('--once', 'Poll once and exit')
-      .option('--desktop-notifications', 'Also send best-effort native desktop notifications')
+      .option('--background', 'Run the profile notification watcher in the background')
+      .option('--status', 'Show the recorded background notification watcher')
+      .option('--stop', 'Stop the recorded background notification watcher')
+      .option('--no-desktop-notifications', 'Only print terminal notifications')
+      .option('--desktop-notifications', 'Send best-effort native desktop notifications (default)')
       .option(
         '--webhook-url <url>',
         'Also POST notification summaries to a generic webhook URL',
@@ -754,17 +821,81 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   ).action(
     async (
       options: CommonOptions & {
+        background?: boolean;
         interval: string;
         once?: boolean;
         desktopNotifications?: boolean;
+        status?: boolean;
+        stop?: boolean;
         webhookUrl?: string;
         webhookHeader?: string[];
       },
     ) => {
+      const modeCount = [options.background, options.status, options.stop].filter(Boolean).length;
+      if (modeCount > 1) {
+        throw new Error('Use only one watch mode: --background, --status, or --stop.');
+      }
+      if (options.once && modeCount > 0) {
+        throw new Error('Use --once only with foreground watch mode.');
+      }
+      const intervalMs = Number(options.interval);
+      if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        throw new Error('Polling interval must be a positive number of milliseconds.');
+      }
+      if (modeCount > 0) {
+        const store = createProfileStore();
+        const profileName = resolveProfileName(options.profile);
+        if (options.status) {
+          const result = await inspectBackgroundNotificationWatcher({
+            home: store.home,
+            profileName,
+          });
+          write(io, options.json ? result : formatWatchStatusHuman(result), options.json);
+          return;
+        }
+        if (options.stop) {
+          const result = await stopBackgroundNotificationWatcher({
+            home: store.home,
+            profileName,
+          });
+          write(io, options.json ? result : formatWatchStopHuman(result), options.json);
+          return;
+        }
+        if (options.token || options.workspace || options.db || options.serverUrl) {
+          throw new Error(
+            'watch --background uses a stored profile so credentials are not exposed in process arguments. Run `handoff start` or `handoff join`, then retry with --profile <name>.',
+          );
+        }
+        store.ensureHome();
+        if (!store.loadProfile(profileName)) {
+          throw new Error(
+            `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay start\` or \`npx -y handoff-relay join <invite>\`.`,
+          );
+        }
+        const auth = createAuthContext({ ...options, profile: profileName });
+        try {
+          await auth.backend.listNotifications({
+            authToken: auth.authToken,
+            workspaceId: auth.workspaceId,
+          });
+        } finally {
+          closeBackend(auth.backend);
+        }
+        const result = await startBackgroundNotificationWatcher({
+          desktopNotifications: options.desktopNotifications !== false,
+          home: store.home,
+          intervalMs,
+          profileName,
+          webhookHeaders: options.webhookHeader,
+          webhookUrl: options.webhookUrl,
+        });
+        write(io, options.json ? result : formatWatchBackgroundHuman(result), options.json);
+        return;
+      }
       const auth = createAuthContext(options);
       const notify = createNotificationDispatcher({
         writeTerminal: (message) => io.writeErr(`${message}\n`),
-        desktop: options.desktopNotifications,
+        desktop: options.desktopNotifications !== false,
         webhookUrl: options.webhookUrl,
         webhookHeaders: parseWebhookHeaders(options.webhookHeader),
         onError: (error, channel) => {
@@ -772,32 +903,18 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
         },
       });
       const watcher = createPollingWatcher({
+        ack: async (summary) => {
+          if (!summary.notification_id) return;
+          await auth.backend.ackNotification({
+            authToken: auth.authToken,
+            notificationId: summary.notification_id,
+          });
+        },
         poll: async () => {
-          const [packets, members] = await Promise.all([
-            Promise.resolve(
-              auth.backend.listInbox({
-                authToken: auth.authToken,
-                workspaceId: auth.workspaceId,
-              }),
-            ),
-            Promise.resolve(
-              auth.backend.listMembers({
-                authToken: auth.authToken,
-                workspaceId: auth.workspaceId,
-              }),
-            ),
-          ]);
-          const handlesById = new Map(
-            members.map((member: { id: string; handle: string }) => [member.id, member.handle]),
-          );
-          return packets.map((packet: RelayPacket) => ({
-            packet_id: packet.packet_id,
-            packet_type: packet.packet_type,
-            title: packet.title,
-            summary: packet.summary,
-            sender_handle: handlesById.get(packet.sender_member_id) ?? packet.sender_member_id,
-            project: packet.project.repo_name,
-          }));
+          return auth.backend.listNotifications({
+            authToken: auth.authToken,
+            workspaceId: auth.workspaceId,
+          });
         },
         notify,
         intervalMs: Number(options.interval),
@@ -815,6 +932,64 @@ export function buildCliProgram(io: CliIo = defaultIo): Command {
   registerDemoCommands(program, { io });
 
   return program;
+}
+
+function formatWatchBackgroundHuman(result: {
+  metadata: BackgroundNotificationWatcherMetadata;
+  status: 'already_running' | 'started';
+}): string {
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'already_running') {
+    return [
+      `Handoff notification watcher is already running for profile "${result.metadata.profileName}" (pid ${pid}).`,
+      `Log: ${result.metadata.logPath}`,
+      `Check: npx -y handoff-relay watch --profile ${result.metadata.profileName} --status`,
+    ].join('\n');
+  }
+  return [
+    `Handoff notification watcher started for profile "${result.metadata.profileName}" (pid ${pid}).`,
+    `Log: ${result.metadata.logPath}`,
+    `Stop: npx -y handoff-relay watch --profile ${result.metadata.profileName} --stop`,
+  ].join('\n');
+}
+
+function formatWatchStatusHuman(result: {
+  metadata?: BackgroundNotificationWatcherMetadata;
+  status: 'not_found' | 'not_running' | 'running';
+}): string {
+  if (!result.metadata) {
+    return 'No Handoff notification watcher is recorded.';
+  }
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'running') {
+    return [
+      `Handoff notification watcher is running for profile "${result.metadata.profileName}" (pid ${pid}).`,
+      `Interval: ${result.metadata.intervalMs}ms`,
+      `Log: ${result.metadata.logPath}`,
+    ].join('\n');
+  }
+  return [
+    `Recorded Handoff notification watcher for profile "${result.metadata.profileName}" is not running.`,
+    `Log: ${result.metadata.logPath}`,
+    `Restart: npx -y handoff-relay watch --profile ${result.metadata.profileName} --background`,
+  ].join('\n');
+}
+
+function formatWatchStopHuman(result: {
+  metadata?: BackgroundNotificationWatcherMetadata;
+  status: 'not_found' | 'not_running' | 'still_running' | 'stopped';
+}): string {
+  if (!result.metadata) {
+    return 'No Handoff notification watcher is recorded.';
+  }
+  const pid = result.metadata.pid ?? 'unknown';
+  if (result.status === 'not_running') {
+    return `Recorded Handoff notification watcher was not running. Removed stale metadata for profile "${result.metadata.profileName}".`;
+  }
+  if (result.status === 'still_running') {
+    return `Handoff notification watcher for profile "${result.metadata.profileName}" is still running after SIGTERM. Metadata was kept so you can inspect pid ${pid}.`;
+  }
+  return `Stopped Handoff notification watcher for profile "${result.metadata.profileName}" (pid ${pid}).`;
 }
 
 export async function runCli(argv: string[]): Promise<CliRunResult> {
@@ -847,6 +1022,7 @@ export async function runCli(argv: string[]): Promise<CliRunResult> {
 }
 
 function configureOutputRecursively(command: Command, output: OutputConfiguration): void {
+  command.exitOverride();
   command.configureOutput(output);
   for (const subcommand of command.commands) {
     configureOutputRecursively(subcommand, output);

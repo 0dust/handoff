@@ -7,8 +7,7 @@ Handoff is a stdio MCP server. Any MCP client that can launch a command with arg
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay doctor
 ```
 
@@ -21,16 +20,18 @@ npx -y handoff-relay doctor
 
 Alice does not run `start` for Sam's workspace. `join` accepts the invite, stores Alice's local profile and credentials, and prints the same profile-backed MCP command for her MCP client.
 
-Handoff can write MCP config for Codex and Cursor when you ask explicitly:
+Handoff can write MCP config for Codex, Claude Code, and Cursor when you ask explicitly:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp claude --invite alice
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
+npx -y handoff-relay join <invite-link> --install-mcp claude
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
-For Claude Code and other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
+For other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
 
 For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
 
@@ -71,7 +72,7 @@ With that flag, the MCP process requests and consumes short-lived approval token
 In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
@@ -98,8 +99,7 @@ Show me the Relay Packet before sending.
 For a same-network team setup:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 For remote/self-hosted setups, users should `join` an invite link from that server. The saved profile records the remote server URL, so the MCP command stays the same:
@@ -140,12 +140,16 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_update_draft`: edit a draft before sender approval.
 - `relay_configure_project_alias`: maps a clone/repo alias to a canonical project name.
 - `relay_project_aliases`: lists workspace project/repo aliases.
-- `relay_approve`: approves and sends ask/share packets, or approves reply packets. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_send_approved`: approves and sends ask/share packets, or approves reply packets after human review. Requires a human approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_review_next`: opens the next actionable inbox packet and returns next actions before hydration.
 - `relay_inbox`: lists packets addressed to the current member.
+- `relay_review`: records review and returns next actions before hydration.
+- `relay_hydrate_approved`: accepts when needed and hydrates a reviewed packet after human approval. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_approve`: compatibility approval tool for older agent prompts.
 - `relay_status`: fetches a readable packet.
 - `relay_view`: records a review view.
 - `relay_accept`: records recipient acceptance before hydration.
-- `relay_hydrate`: returns bounded context plus a hydration receipt. Requires a human hydration approval token unless profile-backed MCP started with `--agent-approvals`.
+- `relay_hydrate`: low-level hydration tool for accepted packets.
 - `relay_reply`: drafts a reply packet; returns `pending_recipient_approval`.
 - `relay_clarify`: requests more information or evidence from the sender after packet review.
 - `relay_decline`: declines an addressed packet.

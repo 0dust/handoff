@@ -51,8 +51,7 @@ Try it:
 
 ```bash
 # Sam hosts a reachable workspace
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 
 # Alice joins from her machine
 npx -y handoff-relay join http://<host>:3737/invite/<invite-token>
