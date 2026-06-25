@@ -14,8 +14,7 @@ Doctor checks the Handoff home directory, active profile, credential file permis
 If the profile is missing and you are hosting a workspace for teammates, run:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 If you are joining someone else's workspace, ask them for the invite command and run:
@@ -30,8 +29,8 @@ Plain `start` is only the right recovery path for local demos, CI smoke tests, o
 If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex or Cursor, Handoff can write the common global config while hosting or joining:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
@@ -45,8 +44,7 @@ npx -y handoff-relay server mcp --profile default
 If a teammate cannot join from another machine, restart the host in LAN mode and send a fresh invite:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 ## `better-sqlite3` Cannot Find Native Bindings

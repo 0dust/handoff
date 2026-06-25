@@ -7,8 +7,7 @@ Handoff runs as a local stdio MCP server near each user's Claude Code session. T
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay watch
 ```
 

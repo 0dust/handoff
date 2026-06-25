@@ -24,6 +24,12 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
     .option('--display-name <name>', 'Local display name')
     .option('--workspace-name <name>', 'Workspace name')
     .option('--host <host>', 'Server bind host')
+    .option(
+      '--invite <handle>',
+      'Create or reprint an invite during setup; repeatable',
+      collectOption,
+      [],
+    )
     .option('--install-mcp <client>', 'Install MCP config for codex or cursor')
     .option('--port <port>', 'Server port')
     .option('--public-url <url>', 'Public invite base URL')
@@ -36,6 +42,7 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
           handle?: string;
           host?: string;
           installMcp?: 'codex' | 'cursor';
+          invite?: string[];
           lan?: boolean;
           mcpInstall?: boolean;
           port?: string;
@@ -55,7 +62,20 @@ export function registerSetupCommands(program: Command, input: { io: CliIo }): v
           publicUrl: options.publicUrl,
           workspaceName: options.workspaceName,
         });
-        write(io, options.json ? startOutput(result) : formatStartHuman(result), options.json);
+        const invites = [];
+        for (const handle of options.invite ?? []) {
+          invites.push(
+            await createInviteForProfile({
+              handle,
+              profileName: result.profile.profileName,
+            }),
+          );
+        }
+        write(
+          io,
+          options.json ? startOutput(result, invites) : formatStartHuman(result, invites),
+          options.json,
+        );
       },
     );
 
@@ -141,7 +161,14 @@ function parseInstallMcpClient(value: string | undefined): InstallableMcpClient 
   throw new Error('Unsupported MCP client. Use --install-mcp codex or --install-mcp cursor.');
 }
 
-function startOutput(result: Awaited<ReturnType<typeof startHandoffSetup>>) {
+function collectOption(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function startOutput(
+  result: Awaited<ReturnType<typeof startHandoffSetup>>,
+  invites: Array<Awaited<ReturnType<typeof createInviteForProfile>>> = [],
+) {
   return {
     profile: result.profile.profileName,
     handle: result.profile.handle,
@@ -150,12 +177,16 @@ function startOutput(result: Awaited<ReturnType<typeof startHandoffSetup>>) {
     publicInviteBaseUrl: result.profile.publicInviteBaseUrl,
     serverStatus: result.server.status,
     mcp: result.mcp,
+    invites,
     nextCommand: result.nextCommand,
     warning: result.server.warning,
   };
 }
 
-function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>): string {
+function formatStartHuman(
+  result: Awaited<ReturnType<typeof startHandoffSetup>>,
+  invites: Array<Awaited<ReturnType<typeof createInviteForProfile>>> = [],
+): string {
   const lines = [
     result.created ? 'Handoff setup created.' : 'Handoff setup is ready.',
     `Profile: ${result.profile.profileName}`,
@@ -175,10 +206,16 @@ function formatStartHuman(result: Awaited<ReturnType<typeof startHandoffSetup>>)
     '',
     'Notifications:',
     `npx -y handoff-relay watch --profile ${result.profile.profileName}`,
-    '',
-    'Next:',
-    result.nextCommand,
   );
+  if (invites.length) {
+    lines.push('', 'Invites:');
+    for (const invite of invites) {
+      lines.push(invite.joinCommand);
+      if (invite.warning) lines.push(`Warning: ${invite.warning}`);
+    }
+  } else {
+    lines.push('', 'Next:', result.nextCommand);
+  }
   return lines.join('\n');
 }
 

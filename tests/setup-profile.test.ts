@@ -1250,6 +1250,41 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI start --invite creates initial invites and reuses them on rerun', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      const first = await runCli(['start', '--invite', 'alice', '--json']);
+      const second = await runCli(['start', '--invite', '@alice', '--json']);
+      const human = await runCli(['start', '--invite', 'alice']);
+
+      expect(first.code).toBe(0);
+      expect(second.code).toBe(0);
+      expect(human.code).toBe(0);
+
+      const firstParsed = JSON.parse(first.stdout);
+      const secondParsed = JSON.parse(second.stdout);
+
+      expect(firstParsed.invites).toHaveLength(1);
+      expect(firstParsed.invites[0]).toMatchObject({
+        handle: 'alice',
+        joinCommand: expect.stringContaining('npx -y handoff-relay join '),
+      });
+      expect(secondParsed.invites[0].inviteLink).toBe(firstParsed.invites[0].inviteLink);
+      expect(secondParsed.invites[0].joinCommand).toBe(firstParsed.invites[0].joinCommand);
+      expect(human.stdout).toContain('Warning: This invite link is loopback-only.');
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
   test('CLI start can install Codex MCP config explicitly', async () => {
     const home = tempHome();
     const previousHome = process.env.HANDOFF_HOME;

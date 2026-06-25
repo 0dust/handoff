@@ -7,8 +7,7 @@ Handoff is a stdio MCP server. Any MCP client that can launch a command with arg
 On Sam's machine, host a LAN-reachable workspace:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay doctor
 ```
 
@@ -24,8 +23,8 @@ Alice does not run `start` for Sam's workspace. `join` accepts the invite, store
 Handoff can write MCP config for Codex and Cursor when you ask explicitly:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
@@ -71,7 +70,7 @@ With that flag, the MCP process requests and consumes short-lived approval token
 In Cursor, open Settings > Tools & MCP and add a new MCP server, or create `.cursor/mcp.json` for a project-scoped setup or `~/.cursor/mcp.json` for a global setup:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
@@ -98,8 +97,7 @@ Show me the Relay Packet before sending.
 For a same-network team setup:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 ```
 
 For remote/self-hosted setups, users should `join` an invite link from that server. The saved profile records the remote server URL, so the MCP command stays the same:

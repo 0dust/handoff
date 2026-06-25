@@ -49,19 +49,19 @@ Most people need one setup command and one notification command.
 Host/admin on the machine that will host the workspace:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 npx -y handoff-relay watch
 ```
 
 Use `--install-mcp cursor` for Cursor. For Claude Code, run `start --lan`, then add the MCP command printed by Handoff with `claude mcp add-json`.
 
-Create one invite per teammate:
+Add more teammates later with `invite`:
 
 ```bash
-npx -y handoff-relay invite alice
+npx -y handoff-relay invite bob
 ```
 
-Rerunning `invite alice` before Alice joins reprints the same active invite instead of creating a confusing duplicate.
+Rerunning `start --invite alice` or `invite alice` before Alice joins reprints the same active invite instead of creating a confusing duplicate.
 
 Each teammate runs the join command from their invite:
 
@@ -103,7 +103,7 @@ Pick the machine that will host Handoff. For a small team this can be a teammate
 On the host:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice --invite bob
 npx -y handoff-relay watch
 ```
 
@@ -126,18 +126,16 @@ npx -y handoff-relay doctor
 If the host uses Cursor instead of Codex:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 ```
 
 Claude Code setup is shown in [Agent setup](#agent-setup).
 
-### 2. Invite Teammates
+### 2. Invite More Teammates
 
-The host/admin creates one invite per teammate:
+Use `--invite <handle>` during `start` for the people you already know. Add more teammates later with:
 
 ```bash
-npx -y handoff-relay invite alice
-npx -y handoff-relay invite bob
 npx -y handoff-relay invite priya
 ```
 
@@ -178,7 +176,7 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Codex
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 
 # teammate joining with Codex
 npx -y handoff-relay join <invite-link> --install-mcp codex
@@ -233,7 +231,7 @@ Install automatically when hosting or joining:
 
 ```bash
 # host/admin who also uses Cursor
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 
 # teammate joining with Cursor
 npx -y handoff-relay join <invite-link> --install-mcp cursor
@@ -271,11 +269,11 @@ Then use `node /path/to/handoff/dist/cli.js` anywhere the examples say `npx -y h
 Set up Handoff as the host/admin for my team.
 
 1. Use `npx -y handoff-relay`, or build this local checkout and use `node /path/to/handoff/dist/cli.js`.
-2. Start a reachable team workspace with `start --lan --install-mcp codex`.
-3. If I use Cursor, use `start --lan --install-mcp cursor` instead.
+2. Start a reachable team workspace with `start --lan --install-mcp codex --invite <teammate>`, repeating `--invite` for each teammate I name.
+3. If I use Cursor, use `start --lan --install-mcp cursor --invite <teammate>` instead.
    If I use Claude Code, show me the `claude mcp add-json` command.
 4. Start packet notifications with `watch`.
-5. Invite each teammate I name and give me their exact join commands.
+5. Give me the exact join command printed for each teammate.
 6. Run `doctor`.
 7. Confirm whether my coding agent can see `relay_share`, `relay_send_approved`, `relay_review`, and `relay_hydrate_approved`. Do not call setup complete until MCP is wired.
 ```

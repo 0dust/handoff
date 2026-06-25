@@ -6,21 +6,20 @@ Handoff lets Codex, Claude Code, Cursor, and other MCP-capable agents send bound
 
 ## Team Setup
 
-On the host/admin machine, create a LAN-reachable workspace:
+On the host/admin machine, create a LAN-reachable workspace and first invite:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 npx -y handoff-relay watch
 ```
 
-Create one invite per teammate:
+Add more teammates later with `invite`:
 
 ```bash
-npx -y handoff-relay invite alice
 npx -y handoff-relay invite bob
 ```
 
-Rerunning an invite for the same handle before that teammate joins reprints the same active invite.
+Rerunning `start --invite <handle>` or `invite <handle>` before that teammate joins reprints the same active invite.
 
 Each teammate runs their own join command:
 
@@ -78,7 +77,7 @@ If I approve, call relay_hydrate_approved.
 Codex can be wired automatically while hosting or joining:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp codex
 ```
 
@@ -103,7 +102,7 @@ claude mcp add-json handoff \
 Cursor can be wired automatically while hosting or joining:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp cursor
+npx -y handoff-relay start --lan --install-mcp cursor --invite alice
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 

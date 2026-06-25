@@ -7,8 +7,7 @@ Handoff runs as a local stdio MCP server beside each user's Codex session. The s
 On Sam's machine, host a LAN-reachable workspace and install the Codex MCP entry:
 
 ```bash
-npx -y handoff-relay start --lan --install-mcp codex
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --install-mcp codex --invite alice
 npx -y handoff-relay watch
 ```
 
@@ -28,8 +27,7 @@ If Alice is not on the same network, host Handoff behind a reachable URL and use
 For a same-machine demo or CI smoke test, use loopback-only setup:
 
 ```bash
-npx -y handoff-relay start --install-mcp codex
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --install-mcp codex --invite alice
 ```
 
 ## Add Handoff To Codex

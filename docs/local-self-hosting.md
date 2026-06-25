@@ -3,8 +3,7 @@
 Handoff is local-first, but team handoff needs a server Alice's machine can reach. For teammates on the same Wi-Fi, Sam can host directly from his machine:
 
 ```bash
-npx -y handoff-relay start --lan
-npx -y handoff-relay invite alice
+npx -y handoff-relay start --lan --invite alice
 npx -y handoff-relay doctor
 ```
 
