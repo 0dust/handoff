@@ -924,8 +924,56 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         status: 'WARN',
       }),
     );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'a2a_adapter_ledger',
+        status: 'OK',
+      }),
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'a2a_agent_card',
+        status: 'OK',
+      }),
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'a2a_receive_stub',
+        status: 'OK',
+      }),
+    );
     expect(JSON.parse(JSON.stringify(report)).profile?.workspaceId).toBe(
       started.profile.workspaceId,
+    );
+  });
+
+  test('doctor validates HTTP Agent Card and disabled A2A receive stub', async () => {
+    const home = tempHome();
+    const started = await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    const serverUrl = await startProfileBackedApi(started.profile.localDatabasePath!);
+    const store = createProfileStore({ home });
+    store.saveProfile({ ...started.profile, publicInviteBaseUrl: serverUrl, serverUrl });
+
+    const report = await runDoctorChecks({
+      env: { HOME: home, HANDOFF_HOME: home },
+      home,
+      profileName: 'default',
+    });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'a2a_agent_card',
+        status: 'OK',
+      }),
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'a2a_receive_stub',
+        status: 'OK',
+      }),
     );
   });
 

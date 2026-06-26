@@ -1,6 +1,24 @@
+import { createHash } from 'node:crypto';
+
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { buildHandoffAgentCard } from '../a2a/handoff-mapping.js';
+import {
+  A2A_AGENT_CARD_PATH,
+  A2A_DISABLED_REASON,
+  A2A_INVALID_REQUEST_CODE,
+  A2A_INVALID_REQUEST_REASON,
+  A2A_JSON_MEDIA_TYPE,
+  A2A_METHOD_NOT_FOUND_CODE,
+  A2A_METHOD_NOT_FOUND_REASON,
+  A2A_NOT_IMPLEMENTED_REASON,
+  A2A_PARSE_ERROR_CODE,
+  A2A_PARSE_ERROR_REASON,
+  A2A_RECEIVE_METHODS,
+  A2A_RECEIVE_PATH,
+  A2A_RECEIVE_UNAVAILABLE_CODE,
+} from '../a2a/schema.js';
 import { isRelayError } from '../errors.js';
 import {
   confidenceInputSchema,
@@ -26,9 +44,66 @@ function bearer(request: { headers: Record<string, unknown> }): string {
   return value.slice('Bearer '.length);
 }
 
+function a2aReceivingEnabled(): boolean {
+  return process.env.HANDOFF_ENABLE_A2A === '1';
+}
+
+const A2A_SUPPORTED_METHODS = new Set<string>(A2A_RECEIVE_METHODS);
+const A2A_REQUEST_SCHEMA = z
+  .object({
+    jsonrpc: z.literal('2.0'),
+    id: z.unknown().optional(),
+    method: z.string().min(1),
+  })
+  .passthrough();
+
+function a2aJsonRpcError(input: { id: unknown; code: number; message: string; reason: string }) {
+  return {
+    jsonrpc: '2.0',
+    id: input.id ?? null,
+    error: {
+      code: input.code,
+      message: input.message,
+      data: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+          reason: input.reason,
+          domain: 'handoff-relay',
+        },
+      ],
+    },
+  };
+}
+
+function isA2aReceiveRequest(request: { method: string; url: string }): boolean {
+  return request.method === 'POST' && request.url.split('?')[0] === A2A_RECEIVE_PATH;
+}
+
+function ifNoneMatchMatches(value: unknown, etag: string): boolean {
+  const values: string[] = Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : typeof value === 'string'
+      ? [value]
+      : [];
+  return values.some((entry) =>
+    entry
+      .split(',')
+      .map((tag) => tag.trim())
+      .some((tag) => tag === '*' || tag === etag),
+  );
+}
+
 export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   const service = options.service;
+
+  app.addContentTypeParser(A2A_JSON_MEDIA_TYPE, { parseAs: 'string' }, (_request, body, done) => {
+    try {
+      done(null, body ? JSON.parse(body as string) : {});
+    } catch (error) {
+      done(error as Error);
+    }
+  });
 
   app.get('/health', async () => ({
     name: 'handoff',
@@ -38,7 +113,81 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     version: runtimeVersion,
   }));
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.get(A2A_AGENT_CARD_PATH, async (request, reply) => {
+    const card = buildHandoffAgentCard({
+      version: runtimeVersion,
+      publicA2aEnabled: a2aReceivingEnabled(),
+    });
+    const etag = `"sha256-${createHash('sha256').update(JSON.stringify(card)).digest('hex')}"`;
+    reply.type(A2A_JSON_MEDIA_TYPE);
+    reply.header('cache-control', 'public, max-age=300, must-revalidate');
+    reply.header('etag', etag);
+    if (ifNoneMatchMatches(request.headers['if-none-match'], etag)) {
+      reply.status(304).send();
+      return;
+    }
+    return card;
+  });
+
+  app.post(A2A_RECEIVE_PATH, async (request, reply) => {
+    const body = A2A_REQUEST_SCHEMA.parse(request.body ?? {});
+    reply.type(A2A_JSON_MEDIA_TYPE);
+    if (body.method && !A2A_SUPPORTED_METHODS.has(body.method)) {
+      reply.status(200).send(
+        a2aJsonRpcError({
+          id: body.id,
+          code: A2A_METHOD_NOT_FOUND_CODE,
+          message: 'A2A method is not supported by this Handoff release.',
+          reason: A2A_METHOD_NOT_FOUND_REASON,
+        }),
+      );
+      return;
+    }
+    if (!a2aReceivingEnabled()) {
+      reply.status(200).send(
+        a2aJsonRpcError({
+          id: body.id,
+          code: A2A_RECEIVE_UNAVAILABLE_CODE,
+          message: 'Public A2A receiving is disabled for this Handoff server.',
+          reason: A2A_DISABLED_REASON,
+        }),
+      );
+      return;
+    }
+    reply.status(200).send(
+      a2aJsonRpcError({
+        id: body.id,
+        code: A2A_RECEIVE_UNAVAILABLE_CODE,
+        message: 'Public A2A receiving is not implemented in this release.',
+        reason: A2A_NOT_IMPLEMENTED_REASON,
+      }),
+    );
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    if (isA2aReceiveRequest(request)) {
+      reply.type(A2A_JSON_MEDIA_TYPE);
+      if (error instanceof z.ZodError) {
+        reply.status(200).send(
+          a2aJsonRpcError({
+            id: null,
+            code: A2A_INVALID_REQUEST_CODE,
+            message: 'Invalid A2A JSON-RPC request.',
+            reason: A2A_INVALID_REQUEST_REASON,
+          }),
+        );
+        return;
+      }
+      reply.status(200).send(
+        a2aJsonRpcError({
+          id: null,
+          code: A2A_PARSE_ERROR_CODE,
+          message: 'Malformed A2A JSON payload.',
+          reason: A2A_PARSE_ERROR_REASON,
+        }),
+      );
+      return;
+    }
     if (isRelayError(error)) {
       reply.status(error.statusCode).send({
         error: {
@@ -371,6 +520,17 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   app.get('/packets/:packetId/status', async (request) => {
     const params = z.object({ packetId: z.string() }).parse(request.params);
     return service.getPacketForMember({ authToken: bearer(request), packetId: params.packetId });
+  });
+
+  app.get('/_diagnostics/a2a/packets/:packetId/transport', async (request) => {
+    const params = z.object({ packetId: z.string() }).parse(request.params);
+    return {
+      transport:
+        service.getPacketTransport({
+          authToken: bearer(request),
+          packetId: params.packetId,
+        }) ?? null,
+    };
   });
 
   app.post('/packets/:packetId/accept', async (request) => {

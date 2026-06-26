@@ -1,5 +1,14 @@
 import type { AuditReceipt, AuditAction } from '../audit.js';
 import { createAuditReceipt } from '../audit.js';
+import {
+  buildTrustReceipt,
+  canonicalPacketHash,
+  mapPacketStatusToA2aTaskState,
+  relayPacketArtifactId,
+  taskIdForPacket,
+  trustReceiptArtifactId,
+} from '../a2a/handoff-mapping.js';
+import { INTERNAL_A2A_PROTOCOL, type TrustReceipt } from '../a2a/schema.js';
 import { relayError } from '../errors.js';
 import { formatHydrationContext } from '../hydration.js';
 import {
@@ -29,6 +38,10 @@ import { assertTransition, type ActorRole } from '../protocol/state-machine.js';
 import { scanPacketForRedactions } from '../redaction.js';
 import type { NotificationSummary } from '../notifications.js';
 import type { RelayDatabase } from '../storage/database.js';
+import {
+  PacketTransportRepository,
+  type PacketTransportRecord,
+} from '../storage/packet-transport-table.js';
 import { PacketRepository, type PacketRepositoryFilters } from './packet-repository.js';
 
 interface MemberRow {
@@ -298,9 +311,11 @@ function parseJson<T>(value: string): T {
 
 export class RelayService {
   private readonly packets: PacketRepository;
+  private readonly packetTransports: PacketTransportRepository;
 
   constructor(private readonly db: RelayDatabase) {
     this.packets = new PacketRepository(db);
+    this.packetTransports = new PacketTransportRepository(db);
   }
 
   close(): void {
@@ -916,34 +931,43 @@ export class RelayService {
       }
     }
 
-    packet = this.transitionPacket(packet, 'sent', actor, 'sender');
-    this.recordAudit({
-      action: 'approve',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { status: 'sent' },
-    });
-    this.recordAudit({
-      action: 'send',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { recipient_member_ids: packet.recipient_member_ids },
-    });
-    packet = this.transitionPacket(packet, 'delivered', actor, 'system');
-    for (const recipientId of packet.recipient_member_ids) {
-      this.createNotification(packet, recipientId);
-    }
-    this.recordAudit({
-      action: 'deliver',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { recipient_member_ids: packet.recipient_member_ids },
-    });
+    const send = this.db.transaction(() => {
+      packet = this.transitionPacket(packet, 'sent', actor, 'sender');
+      const approveReceipt = this.recordAudit({
+        action: 'approve',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { status: 'sent' },
+      });
+      this.recordAudit({
+        action: 'send',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { recipient_member_ids: packet.recipient_member_ids },
+      });
+      packet = this.transitionPacket(packet, 'delivered', actor, 'system');
+      for (const recipientId of packet.recipient_member_ids) {
+        this.createNotification(packet, recipientId);
+      }
+      this.recordAudit({
+        action: 'deliver',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { recipient_member_ids: packet.recipient_member_ids },
+      });
 
-    return { id: packet.packet_id, packet: this.getPacket(packet.packet_id) };
+      packet = this.getPacket(packet.packet_id);
+      this.recordA2aPacketTransport(packet, {
+        createIfMissing: true,
+        timestamps: { sender_approved_at: approveReceipt.created_at },
+      });
+      return packet;
+    });
+    const sent = send();
+    return { id: sent.packet_id, packet: sent };
   }
 
   listInbox(input: { authToken: string; workspaceId: string }): RelayPacket[] {
@@ -1045,20 +1069,25 @@ export class RelayService {
     let packet = this.getPacket(input.packetId);
     this.requireReadable(actor, packet);
     const role = this.actorRole(actor, packet);
-    if (role === 'recipient' && (packet.status === 'delivered' || packet.status === 'replied')) {
-      packet = this.transitionPacket(packet, 'viewed', actor, 'recipient');
-    }
-    if (role === 'recipient') {
-      this.markNotificationRead(packet.packet_id, actor.id);
-    }
-    this.recordAudit({
-      action: 'view',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { status: packet.status },
+    const view = this.db.transaction(() => {
+      if (role === 'recipient' && (packet.status === 'delivered' || packet.status === 'replied')) {
+        packet = this.transitionPacket(packet, 'viewed', actor, 'recipient');
+      }
+      if (role === 'recipient') {
+        this.markNotificationRead(packet.packet_id, actor.id);
+      }
+      this.recordAudit({
+        action: 'view',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { status: packet.status },
+      });
+      this.recordA2aPacketTransport(packet);
+      return packet;
     });
-    return { id: packet.packet_id, packet };
+    const viewed = view();
+    return { id: viewed.packet_id, packet: viewed };
   }
 
   getPacketForMember(input: { authToken: string; packetId: string }): PacketResult {
@@ -1072,15 +1101,20 @@ export class RelayService {
     const actor = this.authenticate(input.authToken);
     const packet = this.getPacket(input.packetId);
     this.requireRecipient(actor, packet);
-    const accepted = this.transitionPacket(packet, 'accepted', actor, 'recipient');
-    this.markNotificationRead(packet.packet_id, actor.id);
-    this.recordAudit({
-      action: 'accept',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: {},
+    const accept = this.db.transaction(() => {
+      const accepted = this.transitionPacket(packet, 'accepted', actor, 'recipient');
+      this.markNotificationRead(packet.packet_id, actor.id);
+      this.recordAudit({
+        action: 'accept',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: {},
+      });
+      this.recordA2aPacketTransport(accepted);
+      return accepted;
     });
+    const accepted = accept();
     return { id: accepted.packet_id, packet: accepted };
   }
 
@@ -1100,33 +1134,39 @@ export class RelayService {
       action: 'hydrate',
       approvalToken: input.approvalToken,
     });
-    const targetStatus = 'hydrated';
-    packet = this.transitionPacket(packet, targetStatus, actor, 'recipient');
-    this.markNotificationRead(packet.packet_id, actor.id);
-    const hydration = formatHydrationContext(packet, {
-      hydratedBy: actor.id,
-      client: input.client,
-      sessionId: input.sessionId,
+    const hydrate = this.db.transaction(() => {
+      const targetStatus = 'hydrated';
+      packet = this.transitionPacket(packet, targetStatus, actor, 'recipient');
+      this.markNotificationRead(packet.packet_id, actor.id);
+      const hydration = formatHydrationContext(packet, {
+        hydratedBy: actor.id,
+        client: input.client,
+        sessionId: input.sessionId,
+      });
+      this.insertAuditReceipt(hydration.receipt);
+      this.db
+        .prepare(
+          `INSERT INTO hydration_receipts
+          (receipt_id, packet_id, workspace_id, actor_member_id, client, session_id, context, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          hydration.receipt.receipt_id,
+          packet.packet_id,
+          packet.workspace_id,
+          actor.id,
+          input.client,
+          input.sessionId ?? null,
+          hydration.context,
+          hydration.receipt.created_at,
+        );
+      packet = this.updatePacket({ ...packet, audit_receipt: hydration.receipt });
+      this.recordA2aPacketTransport(packet, {
+        timestamps: { hydrated_at: hydration.receipt.created_at },
+      });
+      return { ...hydration, packet };
     });
-    this.insertAuditReceipt(hydration.receipt);
-    this.db
-      .prepare(
-        `INSERT INTO hydration_receipts
-        (receipt_id, packet_id, workspace_id, actor_member_id, client, session_id, context, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        hydration.receipt.receipt_id,
-        packet.packet_id,
-        packet.workspace_id,
-        actor.id,
-        input.client,
-        input.sessionId ?? null,
-        hydration.context,
-        hydration.receipt.created_at,
-      );
-    packet = this.updatePacket({ ...packet, audit_receipt: hydration.receipt });
-    return { ...hydration, packet };
+    return hydrate();
   }
 
   createReplyDraft(input: ReplyDraftInput): PacketResult {
@@ -1144,36 +1184,41 @@ export class RelayService {
       throw relayError('INVALID_INPUT', 'Replies can only be created for ask packets.', 400);
     }
 
-    if (original.status === 'accepted' || original.status === 'hydrated') {
-      original = this.transitionPacket(original, 'response_drafting', actor, 'recipient');
-    }
+    const draftReply = this.db.transaction(() => {
+      if (original.status === 'accepted' || original.status === 'hydrated') {
+        original = this.transitionPacket(original, 'response_drafting', actor, 'recipient');
+        this.recordA2aPacketTransport(original);
+      }
 
-    const packet = this.preparePacket(
-      buildPacketDraft({
-        packet_type: 'reply',
-        workspace_id: original.workspace_id,
-        sender_member_id: actor.id,
-        recipient_member_ids: [original.sender_member_id],
-        parent_packet_id: original.packet_id,
-        status: 'pending_recipient_approval',
-        title: input.title ?? `Reply: ${original.title}`,
-        summary: input.summary,
-        answer: input.answer,
-        source_client: input.sourceClient,
-        project: original.project,
-        evidence: input.evidence,
-        confidence: input.confidence,
-      }),
-    );
-    this.insertPacket(packet);
-    this.insertAuditReceipt(packet.audit_receipt as AuditReceipt);
-    this.recordAudit({
-      action: 'reply',
-      actorMemberId: actor.id,
-      packetId: original.packet_id,
-      workspaceId: original.workspace_id,
-      metadata: { reply_packet_id: packet.packet_id, status: 'pending_recipient_approval' },
+      const packet = this.preparePacket(
+        buildPacketDraft({
+          packet_type: 'reply',
+          workspace_id: original.workspace_id,
+          sender_member_id: actor.id,
+          recipient_member_ids: [original.sender_member_id],
+          parent_packet_id: original.packet_id,
+          status: 'pending_recipient_approval',
+          title: input.title ?? `Reply: ${original.title}`,
+          summary: input.summary,
+          answer: input.answer,
+          source_client: input.sourceClient,
+          project: original.project,
+          evidence: input.evidence,
+          confidence: input.confidence,
+        }),
+      );
+      this.insertPacket(packet);
+      this.insertAuditReceipt(packet.audit_receipt as AuditReceipt);
+      this.recordAudit({
+        action: 'reply',
+        actorMemberId: actor.id,
+        packetId: original.packet_id,
+        workspaceId: original.workspace_id,
+        metadata: { reply_packet_id: packet.packet_id, status: 'pending_recipient_approval' },
+      });
+      return packet;
     });
+    const packet = draftReply();
     return { id: packet.packet_id, packet };
   }
 
@@ -1194,49 +1239,71 @@ export class RelayService {
       action: 'reply',
       approvalToken: input.approvalToken,
     });
-    reply = this.transitionPacket(reply, 'replied', actor, 'recipient');
-    for (const recipientId of reply.recipient_member_ids) {
-      this.createNotification(reply, recipientId);
-    }
-    this.recordAudit({
-      action: 'approve',
-      actorMemberId: actor.id,
-      packetId: reply.packet_id,
-      workspaceId: reply.workspace_id,
-      metadata: { reply_packet_id: reply.packet_id },
-    });
-
-    if (reply.parent_packet_id) {
-      let parent = this.getPacket(reply.parent_packet_id);
-      if (parent.status === 'response_drafting') {
-        parent = this.transitionPacket(parent, 'pending_recipient_approval', actor, 'recipient');
+    const approve = this.db.transaction(() => {
+      reply = this.transitionPacket(reply, 'replied', actor, 'recipient');
+      for (const recipientId of reply.recipient_member_ids) {
+        this.createNotification(reply, recipientId);
       }
-      parent = this.transitionPacket(parent, 'replied', actor, 'recipient');
-      this.recordAudit({
-        action: 'reply',
+      const approveReceipt = this.recordAudit({
+        action: 'approve',
         actorMemberId: actor.id,
-        packetId: parent.packet_id,
-        workspaceId: parent.workspace_id,
-        metadata: { reply_packet_id: reply.packet_id, status: 'replied' },
+        packetId: reply.packet_id,
+        workspaceId: reply.workspace_id,
+        metadata: { reply_packet_id: reply.packet_id },
       });
-    }
 
-    return { id: reply.packet_id, packet: this.getPacket(reply.packet_id) };
+      if (reply.parent_packet_id) {
+        let parent = this.getPacket(reply.parent_packet_id);
+        if (parent.status === 'response_drafting') {
+          parent = this.transitionPacket(parent, 'pending_recipient_approval', actor, 'recipient');
+        }
+        parent = this.transitionPacket(parent, 'replied', actor, 'recipient');
+        const parentReplyReceipt = this.recordAudit({
+          action: 'reply',
+          actorMemberId: actor.id,
+          packetId: parent.packet_id,
+          workspaceId: parent.workspace_id,
+          metadata: { reply_packet_id: reply.packet_id, status: 'replied' },
+        });
+        this.recordA2aPacketTransport(this.getPacket(parent.packet_id), {
+          timestamps: { replied_at: parentReplyReceipt.created_at },
+        });
+      }
+
+      reply = this.getPacket(reply.packet_id);
+      this.recordA2aPacketTransport(reply, {
+        createIfMissing: true,
+        timestamps: {
+          sender_approved_at: approveReceipt.created_at,
+          replied_at: approveReceipt.created_at,
+        },
+      });
+      return reply;
+    });
+    const approved = approve();
+    return { id: approved.packet_id, packet: approved };
   }
 
   declinePacket(input: { authToken: string; packetId: string; reason?: string }): PacketResult {
     const actor = this.authenticate(input.authToken);
     const packet = this.getPacket(input.packetId);
     this.requireRecipient(actor, packet);
-    const declined = this.transitionPacket(packet, 'declined', actor, 'recipient');
-    this.markNotificationRead(packet.packet_id, actor.id);
-    this.recordAudit({
-      action: 'decline',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { reason: input.reason },
+    const decline = this.db.transaction(() => {
+      const declined = this.transitionPacket(packet, 'declined', actor, 'recipient');
+      this.markNotificationRead(packet.packet_id, actor.id);
+      const declineReceipt = this.recordAudit({
+        action: 'decline',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { reason: input.reason },
+      });
+      this.recordA2aPacketTransport(declined, {
+        timestamps: { terminal_at: declineReceipt.created_at },
+      });
+      return declined;
     });
+    const declined = decline();
     return { id: declined.packet_id, packet: declined };
   }
 
@@ -1245,22 +1312,29 @@ export class RelayService {
     const packet = this.getPacket(input.packetId);
     this.requireReadable(actor, packet);
     const role = this.actorRole(actor, packet);
-    const archived = this.transitionPacket(
-      packet,
-      'archived',
-      actor,
-      role === 'admin' ? 'admin' : role,
-    );
-    if (role === 'recipient') {
-      this.markNotificationRead(packet.packet_id, actor.id);
-    }
-    this.recordAudit({
-      action: 'archive',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: {},
+    const archive = this.db.transaction(() => {
+      const archived = this.transitionPacket(
+        packet,
+        'archived',
+        actor,
+        role === 'admin' ? 'admin' : role,
+      );
+      if (role === 'recipient') {
+        this.markNotificationRead(packet.packet_id, actor.id);
+      }
+      const archiveReceipt = this.recordAudit({
+        action: 'archive',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: {},
+      });
+      this.recordA2aPacketTransport(archived, {
+        timestamps: { terminal_at: archiveReceipt.created_at },
+      });
+      return archived;
     });
+    const archived = archive();
     return { id: archived.packet_id, packet: archived };
   }
 
@@ -1273,35 +1347,40 @@ export class RelayService {
     const actor = this.authenticate(input.authToken);
     let original = this.getPacket(input.packetId);
     this.requireRecipient(actor, original);
-    original = this.transitionPacket(original, 'clarification_requested', actor, 'recipient');
-    this.markNotificationRead(original.packet_id, actor.id);
-    this.recordAudit({
-      action: 'clarify',
-      actorMemberId: actor.id,
-      packetId: original.packet_id,
-      workspaceId: original.workspace_id,
-      metadata: { question: input.question, requested_evidence: input.requestedEvidence ?? [] },
-    });
+    const clarify = this.db.transaction(() => {
+      original = this.transitionPacket(original, 'clarification_requested', actor, 'recipient');
+      this.markNotificationRead(original.packet_id, actor.id);
+      this.recordAudit({
+        action: 'clarify',
+        actorMemberId: actor.id,
+        packetId: original.packet_id,
+        workspaceId: original.workspace_id,
+        metadata: { question: input.question, requested_evidence: input.requestedEvidence ?? [] },
+      });
 
-    const packet = this.preparePacket(
-      buildPacketDraft({
-        packet_type: 'clarification',
-        workspace_id: original.workspace_id,
-        sender_member_id: actor.id,
-        recipient_member_ids: [original.sender_member_id],
-        parent_packet_id: original.packet_id,
-        status: 'delivered',
-        title: `Clarification: ${original.title}`,
-        summary: input.question,
-        question: input.question,
-        source_client: original.source_client,
-        project: original.project,
-        suggested_next_steps: input.requestedEvidence,
-      }),
-    );
-    this.insertPacket(packet);
-    this.insertAuditReceipt(packet.audit_receipt as AuditReceipt);
-    this.createNotification(packet, original.sender_member_id);
+      const packet = this.preparePacket(
+        buildPacketDraft({
+          packet_type: 'clarification',
+          workspace_id: original.workspace_id,
+          sender_member_id: actor.id,
+          recipient_member_ids: [original.sender_member_id],
+          parent_packet_id: original.packet_id,
+          status: 'delivered',
+          title: `Clarification: ${original.title}`,
+          summary: input.question,
+          question: input.question,
+          source_client: original.source_client,
+          project: original.project,
+          suggested_next_steps: input.requestedEvidence,
+        }),
+      );
+      this.insertPacket(packet);
+      this.insertAuditReceipt(packet.audit_receipt as AuditReceipt);
+      this.createNotification(packet, original.sender_member_id);
+      this.recordA2aPacketTransport(original);
+      return packet;
+    });
+    const packet = clarify();
     return { id: packet.packet_id, packet };
   }
 
@@ -1314,15 +1393,32 @@ export class RelayService {
     const packet = this.getPacket(input.packetId);
     this.requireSender(actor, packet);
     const status = input.resolution === 'resolved' ? 'closed_resolved' : 'closed_unresolved';
-    const closed = this.transitionPacket(packet, status, actor, 'sender');
-    this.recordAudit({
-      action: 'close',
-      actorMemberId: actor.id,
-      packetId: packet.packet_id,
-      workspaceId: packet.workspace_id,
-      metadata: { resolution: input.resolution },
+    const close = this.db.transaction(() => {
+      const closed = this.transitionPacket(packet, status, actor, 'sender');
+      const closeReceipt = this.recordAudit({
+        action: 'close',
+        actorMemberId: actor.id,
+        packetId: packet.packet_id,
+        workspaceId: packet.workspace_id,
+        metadata: { resolution: input.resolution },
+      });
+      this.recordA2aPacketTransport(closed, {
+        timestamps: { terminal_at: closeReceipt.created_at },
+      });
+      return closed;
     });
+    const closed = close();
     return { id: closed.packet_id, packet: closed };
+  }
+
+  getPacketTransport(input: {
+    authToken: string;
+    packetId: string;
+  }): PacketTransportRecord | undefined {
+    const actor = this.authenticate(input.authToken);
+    const packet = this.getPacket(input.packetId);
+    this.requireReadable(actor, packet);
+    return this.packetTransports.get(packet.packet_id);
   }
 
   searchPackets(
@@ -1891,6 +1987,48 @@ export class RelayService {
           AND status = 'unread'`,
       )
       .run(new Date().toISOString(), packetId, memberId);
+  }
+
+  private recordA2aPacketTransport(
+    packet: RelayPacket,
+    input: {
+      createIfMissing?: boolean;
+      timestamps?: Partial<
+        Pick<TrustReceipt, 'sender_approved_at' | 'hydrated_at' | 'replied_at' | 'terminal_at'>
+      >;
+    } = {},
+  ): PacketTransportRecord | undefined {
+    const existing = this.packetTransports.get(packet.packet_id, INTERNAL_A2A_PROTOCOL);
+    if (!existing && !input.createIfMissing) {
+      return undefined;
+    }
+    const packetHash = existing?.packet_hash ?? canonicalPacketHash(packet);
+    const receipt = buildTrustReceipt({
+      packet,
+      packetHash,
+      a2aTaskId: existing?.task_id ?? taskIdForPacket(packet.packet_id),
+      senderApprovedAt:
+        input.timestamps?.sender_approved_at ?? existing?.trust_receipt.sender_approved_at,
+      hydratedAt: input.timestamps?.hydrated_at ?? existing?.trust_receipt.hydrated_at,
+      repliedAt: input.timestamps?.replied_at ?? existing?.trust_receipt.replied_at,
+      terminalAt: input.timestamps?.terminal_at ?? existing?.trust_receipt.terminal_at,
+      createdAt: existing?.trust_receipt.created_at ?? packet.created_at,
+      updatedAt: packet.updated_at,
+    });
+
+    return this.packetTransports.upsert({
+      packet_id: packet.packet_id,
+      workspace_id: packet.workspace_id,
+      ...(existing ? { existing } : {}),
+      protocol: INTERNAL_A2A_PROTOCOL,
+      task_id: receipt.a2a_task_id,
+      artifact_id: relayPacketArtifactId(packet.packet_id),
+      trust_receipt_artifact_id: trustReceiptArtifactId(packet.packet_id),
+      packet_hash: packetHash,
+      task_state: mapPacketStatusToA2aTaskState(packet.status),
+      direction: 'outbound',
+      trust_receipt: receipt,
+    });
   }
 
   private recordAudit(input: {
