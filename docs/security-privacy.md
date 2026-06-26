@@ -25,6 +25,8 @@ The service rejects invalid state transitions, and send/reply/hydrate actions re
 
 Approval-token minting requires both the member token and a separate per-member approval secret returned during setup/acceptance. A member token alone cannot mint approval tokens. Agent-confirmed mode does not cryptographically prove a fresh terminal phrase; it treats explicit instruction in the active local agent session as the approval event.
 
+Any A2A adapter code preserves these Handoff gates: sender approval before send, recipient review before hydration, reply approval before return, and audit receipts for movement. The stable security boundary is Handoff's service/state-machine and Relay Packet model. A2A is internal adapter infrastructure, not a public security boundary, public endpoint, or externally supported protocol.
+
 ## Redaction
 
 The redaction engine blocks by default when it sees:
@@ -53,6 +55,7 @@ Authorization is enforced in the service/storage layer:
 - Admins can manage workspace membership and view audit metadata by default.
 - Admin packet body access is off by default and must be enabled as a workspace setting.
 - Audit receipts are available through CLI, API, and MCP. Workspace-wide audit listing is admin-only; packet-specific audit listing follows metadata visibility.
+- A2A Trust Receipt metadata is workspace-scoped and follows the same sensitivity posture as audit metadata. It is not public proof material.
 - Revoked members cannot authenticate and cannot receive future packets.
 - Search and history filter before returning results. Admins without body access can search and filter metadata fields only; body/provenance text is not exposed as a search oracle.
 

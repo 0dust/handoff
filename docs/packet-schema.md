@@ -2,6 +2,8 @@
 
 Relay packets are Zod-validated TypeScript objects. The source lives in `src/protocol/schema.ts`.
 
+Relay Packet is the documented interchange contract. Internal A2A adapter infrastructure may translate this shape into task, artifact, and Trust Receipt metadata inside Handoff, but users should not depend on A2A field names, endpoints, or protocol compatibility as a public API.
+
 ## Packet Types
 
 - `ask`: requires `question`.
@@ -36,6 +38,14 @@ Relay packets are Zod-validated TypeScript objects. The source lives in `src/pro
 - `redaction_report`
 - `hydration_policy`
 - `audit_receipt`
+
+## Internal A2A Adapter Metadata
+
+When a packet is approved and delivered, Handoff records internal A2A-shaped metadata in a separate transport ledger. Relay Packet artifacts use `application/vnd.handoff.relay-packet+json`; workspace-scoped Trust Receipt artifacts use `application/vnd.handoff.trust-receipt+json`.
+
+This metadata mirrors Relay Packet state. It does not replace packet status, approval tokens, redaction, hydration policy, or audit receipts.
+
+Diagnostic transport inspection, where present, is an authenticated internal support surface. It is not a public A2A protocol contract.
 
 ## Project Identity
 

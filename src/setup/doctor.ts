@@ -1,8 +1,19 @@
 import { existsSync, chmodSync } from 'node:fs';
 
 import { RelayApiClient } from '../api/client.js';
+import {
+  A2A_AGENT_CARD_PATH,
+  A2A_DISABLED_REASON,
+  A2A_JSON_MEDIA_TYPE,
+  A2A_NOT_IMPLEMENTED_REASON,
+  A2A_RECEIVE_PATH,
+  A2A_RECEIVE_UNAVAILABLE_CODE,
+  a2aAgentCardSchema,
+} from '../a2a/schema.js';
+import { runtimeVersion } from '../runtime/version.js';
 import { RelayService } from '../service/relay-service.js';
 import { createRelayDatabase } from '../storage/database.js';
+import { PacketTransportRepository } from '../storage/packet-transport-table.js';
 import { probeHandoffServer } from './lifecycle.js';
 import { summarizeMcpSetup } from './mcp-config.js';
 import {
@@ -154,9 +165,11 @@ export async function runDoctorChecks(
   if (profile.serverUrl === 'local-db') {
     checks.push(ok('server_reachable', 'Profile uses local database mode.'));
     checks.push(ok('server_identity', 'Local database profile does not need HTTP health.'));
+    checks.push(...localA2aChecks(profile));
   } else if (await probeHandoffServer(profile.serverUrl, { timeoutMs: 1_000 })) {
     checks.push(ok('server_reachable', `Server is reachable at ${profile.serverUrl}.`));
     checks.push(ok('server_identity', 'Server identifies as Handoff.'));
+    checks.push(...(await httpA2aChecks(profile.serverUrl)));
   } else {
     checks.push(
       fail(
@@ -212,6 +225,121 @@ export async function runDoctorChecks(
   }
 
   return buildReport(store.home, checks, profile);
+}
+
+function localA2aChecks(profile: HandoffProfile): DoctorCheck[] {
+  const checks: DoctorCheck[] = [
+    ok('a2a_agent_card', 'Local database mode does not expose an HTTP Agent Card.'),
+    ok('a2a_receive_stub', 'Local database mode does not expose a public A2A receive endpoint.'),
+  ];
+  if (!profile.localDatabasePath || !existsSync(profile.localDatabasePath)) {
+    checks.push(
+      fail(
+        'a2a_adapter_ledger',
+        'Adapter ledger could not be checked because the local database is missing.',
+        'Run `npx -y handoff-relay start` to recreate local setup.',
+      ),
+    );
+    return checks;
+  }
+  let db: ReturnType<typeof createRelayDatabase> | undefined;
+  try {
+    db = createRelayDatabase(profile.localDatabasePath);
+    new PacketTransportRepository(db).listForPacket('__doctor_probe__');
+    checks.push(ok('a2a_adapter_ledger', 'A2A adapter ledger table is available.'));
+  } catch (error) {
+    checks.push(
+      fail(
+        'a2a_adapter_ledger',
+        error instanceof Error ? error.message : 'A2A adapter ledger check failed.',
+        'Run `npx -y handoff-relay doctor --fix` or recreate local setup.',
+      ),
+    );
+  } finally {
+    db?.close();
+  }
+  return checks;
+}
+
+async function httpA2aChecks(serverUrl: string): Promise<DoctorCheck[]> {
+  const baseUrl = serverUrl.replace(/\/+$/, '');
+  const [card, receiveStub] = await Promise.allSettled([
+    httpA2aAgentCardCheck(baseUrl),
+    httpA2aReceiveStubCheck(baseUrl),
+  ]);
+  return [
+    card.status === 'fulfilled'
+      ? card.value
+      : fail(
+          'a2a_agent_card',
+          card.reason instanceof Error ? card.reason.message : 'A2A Agent Card check failed.',
+          'Restart the Handoff server and rerun doctor.',
+        ),
+    receiveStub.status === 'fulfilled'
+      ? receiveStub.value
+      : fail(
+          'a2a_receive_stub',
+          receiveStub.reason instanceof Error
+            ? receiveStub.reason.message
+            : 'A2A receive stub check failed.',
+          'Restart the Handoff server and rerun doctor.',
+        ),
+  ];
+}
+
+async function httpA2aAgentCardCheck(baseUrl: string): Promise<DoctorCheck> {
+  const cardResponse = await fetch(`${baseUrl}${A2A_AGENT_CARD_PATH}`, {
+    signal: AbortSignal.timeout(1_000),
+  });
+  const card = a2aAgentCardSchema.parse(await cardResponse.json());
+  const cacheControl = cardResponse.headers.get('cache-control') ?? '';
+  const etag = cardResponse.headers.get('etag') ?? '';
+  const validCard =
+    cardResponse.ok &&
+    card.version === runtimeVersion &&
+    cacheControl.includes('max-age') &&
+    Boolean(etag);
+  return validCard
+    ? ok('a2a_agent_card', 'A2A Agent Card is reachable and cacheable.')
+    : fail(
+        'a2a_agent_card',
+        'A2A Agent Card is missing required version, interface, cache, or ETag metadata.',
+        'Restart the Handoff server with the current package version.',
+      );
+}
+
+async function httpA2aReceiveStubCheck(baseUrl: string): Promise<DoctorCheck> {
+  const stubResponse = await fetch(`${baseUrl}${A2A_RECEIVE_PATH}`, {
+    method: 'POST',
+    body: JSON.stringify({ jsonrpc: '2.0', id: 'doctor', method: 'SendMessage', params: {} }),
+    headers: { 'content-type': A2A_JSON_MEDIA_TYPE },
+    signal: AbortSignal.timeout(1_000),
+  });
+  const body = (await stubResponse.json()) as {
+    error?: { code?: number; data?: Array<{ reason?: string }> };
+    id?: string;
+    jsonrpc?: string;
+  };
+  const reason = body.error?.data?.[0]?.reason;
+  const unavailable =
+    stubResponse.ok &&
+    body.jsonrpc === '2.0' &&
+    body.id === 'doctor' &&
+    body.error?.code === A2A_RECEIVE_UNAVAILABLE_CODE;
+  if (unavailable && reason === A2A_DISABLED_REASON) {
+    return ok('a2a_receive_stub', 'Public A2A receiving is disabled.');
+  }
+  if (unavailable && reason === A2A_NOT_IMPLEMENTED_REASON) {
+    return warn(
+      'a2a_receive_stub',
+      'Public A2A receiving flag is enabled, but receiving is not implemented.',
+    );
+  }
+  return fail(
+    'a2a_receive_stub',
+    'A2A receive stub did not return the expected disabled response.',
+    'Restart the Handoff server with the current package version.',
+  );
 }
 
 export function formatDoctorHuman(report: DoctorReport): string {

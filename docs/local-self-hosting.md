@@ -29,6 +29,8 @@ npx -y handoff-relay server start \
 
 Put the host behind your normal network controls. Handoff does not provide a hosted cloud service.
 
+The self-hosted server is a Handoff coordination server for Relay Packets, profiles, approvals, and audit receipts. Do not expose it or document it as a public A2A service. Any A2A adapter layer is internal infrastructure behind the Handoff API and stays on the same private/self-hosted trust boundary.
+
 For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
 
 ```bash

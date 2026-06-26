@@ -9,7 +9,7 @@ npx -y handoff-relay doctor
 npx -y handoff-relay doctor --json
 ```
 
-Doctor checks the Handoff home directory, active profile, credential file permissions, member token, approval secret, server reachability, workspace access, and the profile-backed MCP command.
+Doctor checks the Handoff home directory, active profile, credential file permissions, member token, approval secret, server reachability, workspace access, internal adapter health, disabled public A2A state, and the profile-backed MCP command.
 
 If the profile is missing and you are hosting a workspace for teammates, run:
 
@@ -49,6 +49,10 @@ If a teammate cannot join from another machine, restart the host in LAN mode and
 ```bash
 npx -y handoff-relay start --lan --invite alice
 ```
+
+## A2A Or Adapter Confusion
+
+Handoff's supported user-facing integration is MCP plus the Handoff CLI/API. A2A, where present, is internal adapter infrastructure for Handoff's own Relay Packet flow. There are no supported public A2A endpoints, no public A2A protocol contract, and no promise that external A2A clients can connect directly.
 
 ## `better-sqlite3` Cannot Find Native Bindings
 

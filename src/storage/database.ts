@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { createPacketTableSql } from './packet-table.js';
+import { createPacketTransportTableSql } from './packet-transport-table.js';
 
 export type RelayDatabase = Database.Database;
 
@@ -113,6 +114,8 @@ CREATE TABLE IF NOT EXISTS approval_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS approval_packet_idx ON approval_tokens(packet_id, actor_member_id, action);
+
+${createPacketTransportTableSql()}
 `;
 
 export function createRelayDatabase(path = ':memory:'): RelayDatabase {

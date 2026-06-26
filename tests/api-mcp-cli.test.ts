@@ -25,8 +25,9 @@ import { createRelayDatabase } from '../src/storage/database.js';
 function createService() {
   const dir = mkdtempSync(join(tmpdir(), 'agent-relay-api-'));
   const dbPath = join(dir, 'relay.db');
-  const service = new RelayService(createRelayDatabase(dbPath));
-  return { service, dbPath };
+  const db = createRelayDatabase(dbPath);
+  const service = new RelayService(db);
+  return { service, db, dbPath };
 }
 
 async function startApiForService(service: RelayService) {
@@ -247,6 +248,11 @@ describe('coordination API', () => {
       headers: { authorization: `Bearer ${workspace.admin.token}` },
       payload: { approvalToken: approval.approval_token },
     });
+    const transportResponse = await app.inject({
+      method: 'GET',
+      url: `/_diagnostics/a2a/packets/${ask.id}/transport`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
     const inboxResponse = await app.inject({
       method: 'GET',
       url: `/inbox?workspaceId=${workspace.workspace.id}`,
@@ -255,7 +261,348 @@ describe('coordination API', () => {
 
     expect(workspaceResponse.statusCode).toBe(200);
     expect(askResponse.statusCode).toBe(200);
+    expect(transportResponse.json().transport).toMatchObject({
+      protocol: 'a2a-internal',
+      task_id: `tsk_${ask.id}`,
+      trust_receipt: {
+        packet_id: ask.id,
+        redaction_blocked: false,
+      },
+    });
     expect(inboxResponse.json()).toHaveLength(1);
+  });
+
+  test('diagnostic transport route is explicit, authenticated, and stable when absent', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'API Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    service.acceptInvite({ displayName: 'Alice', inviteToken: invite.invite.token });
+    const outsider = service.createWorkspace({
+      name: 'Other Team',
+      adminHandle: 'owen',
+      adminName: 'Owen',
+    });
+    const draft = service.createShareDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      finding: 'The retry path skips persistence.',
+      title: 'Retry persistence',
+      summary: 'A2A metadata should be inspectable only through an explicit diagnostic route.',
+      sourceClient: 'codex',
+    });
+
+    const beforeSend = await app.inject({
+      method: 'GET',
+      url: `/_diagnostics/a2a/packets/${draft.id}/transport`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
+    const missingAuth = await app.inject({
+      method: 'GET',
+      url: `/_diagnostics/a2a/packets/${draft.id}/transport`,
+    });
+    const unrelatedMember = await app.inject({
+      method: 'GET',
+      url: `/_diagnostics/a2a/packets/${draft.id}/transport`,
+      headers: { authorization: `Bearer ${outsider.admin.token}` },
+    });
+
+    const approval = service.createApprovalToken({
+      authToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      packetId: draft.id,
+      action: 'send',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval.approval_token,
+    });
+    const afterSend = await app.inject({
+      method: 'GET',
+      url: `/_diagnostics/a2a/packets/${draft.id}/transport`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
+    const status = await app.inject({
+      method: 'GET',
+      url: `/packets/${draft.id}/status`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+    });
+
+    expect(beforeSend.statusCode).toBe(200);
+    expect(beforeSend.json()).toEqual({ transport: null });
+    expect(missingAuth.statusCode).toBe(401);
+    expect(unrelatedMember.statusCode).toBe(403);
+    expect(afterSend.json().transport).toMatchObject({
+      packet_id: draft.id,
+      task_state: 'TASK_STATE_WORKING',
+      trust_receipt: {
+        packet_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+    });
+    expect(status.json()).not.toHaveProperty('transport');
+  });
+
+  test('serves a minimal cacheable Agent Card without exposing workspace activity', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'Private API Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({ displayName: 'Alice', inviteToken: invite.invite.token });
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Sensitive body should not appear.',
+      title: 'Leaky Activity Signal',
+      summary: 'Private packet activity must not appear in discovery.',
+      sourceClient: 'codex',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/.well-known/agent-card.json',
+      headers: {
+        host: 'handoff.test:3737',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const card = response.json();
+    const etag = response.headers.etag;
+    const cached = await app.inject({
+      method: 'GET',
+      url: '/.well-known/agent-card.json',
+      headers: {
+        host: 'handoff.test:3737',
+        'if-none-match': etag,
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const cachedFromList = await app.inject({
+      method: 'GET',
+      url: '/.well-known/agent-card.json',
+      headers: {
+        host: 'handoff.test:3737',
+        'if-none-match': `"other", ${etag}`,
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const cachedFromWildcard = await app.inject({
+      method: 'GET',
+      url: '/.well-known/agent-card.json',
+      headers: {
+        host: 'handoff.test:3737',
+        'if-none-match': '*',
+        'x-forwarded-proto': 'https',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('application/a2a+json');
+    expect(response.headers['cache-control']).toContain('max-age=300');
+    expect(etag).toMatch(/^"sha256-[a-f0-9]{64}"$/);
+    expect(cached.statusCode).toBe(304);
+    expect(cachedFromList.statusCode).toBe(304);
+    expect(cachedFromWildcard.statusCode).toBe(304);
+    expect(card).toMatchObject({
+      name: 'Handoff',
+      version: packageJson.version,
+      supportedInterfaces: [],
+      capabilities: {
+        streaming: false,
+        pushNotifications: false,
+        extendedAgentCard: false,
+        publicA2aReceiving: false,
+      },
+    });
+    const serializedCard = JSON.stringify(card);
+    expect(serializedCard).not.toContain(workspace.workspace.id);
+    expect(serializedCard).not.toContain(workspace.admin.id);
+    expect(serializedCard).not.toContain(alice.member.id);
+    expect(serializedCard).not.toContain(workspace.admin.token);
+    expect(serializedCard).not.toContain(workspace.admin.approval_secret);
+    expect(serializedCard).not.toContain(draft.id);
+    expect(serializedCard).not.toContain('Leaky Activity Signal');
+    expect(serializedCard).not.toContain('Sensitive body should not appear.');
+    expect(serializedCard).not.toContain('relay_member');
+  });
+
+  test('A2A receive stub returns disabled JSON-RPC errors without creating packets', async () => {
+    const { service, db } = createService();
+    const app = buildApiServer({ service });
+    service.createWorkspace({ name: 'API Team', adminHandle: 'sam', adminName: 'Sam' });
+
+    const disabled = await app.inject({
+      method: 'POST',
+      url: '/a2a',
+      payload: {
+        jsonrpc: '2.0',
+        id: 'req-1',
+        method: 'SendMessage',
+        params: { message: { parts: [] } },
+      },
+    });
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/a2a',
+      payload: {
+        jsonrpc: '2.0',
+        id: 'req-2',
+        method: 'TaskTeleport',
+      },
+    });
+    const packetCount = db.prepare('SELECT COUNT(*) AS count FROM packets').get() as {
+      count: number;
+    };
+
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.headers['content-type']).toContain('application/a2a+json');
+    expect(disabled.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: 'req-1',
+      error: {
+        code: -32004,
+        data: [expect.objectContaining({ reason: 'A2A_DISABLED' })],
+      },
+    });
+    expect(unknown.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: 'req-2',
+      error: {
+        code: -32601,
+        data: [expect.objectContaining({ reason: 'A2A_METHOD_NOT_FOUND' })],
+      },
+    });
+    expect(packetCount.count).toBe(0);
+  });
+
+  test('A2A receive stub keeps JSON-RPC error shape for malformed and invalid requests', async () => {
+    const { service, db } = createService();
+    const app = buildApiServer({ service });
+    service.createWorkspace({ name: 'API Team', adminHandle: 'sam', adminName: 'Sam' });
+
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/a2a',
+      payload: '{"jsonrpc":',
+      headers: { 'content-type': 'application/a2a+json' },
+    });
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/a2a',
+      payload: {
+        jsonrpc: '1.0',
+        id: 'invalid-1',
+        method: 'SendMessage',
+      },
+      headers: { 'content-type': 'application/a2a+json' },
+    });
+    const missingMethod = await app.inject({
+      method: 'POST',
+      url: '/a2a',
+      payload: {
+        jsonrpc: '2.0',
+        id: 'invalid-2',
+      },
+      headers: { 'content-type': 'application/a2a+json' },
+    });
+    const packetCount = db.prepare('SELECT COUNT(*) AS count FROM packets').get() as {
+      count: number;
+    };
+
+    expect(malformed.statusCode).toBe(200);
+    expect(malformed.headers['content-type']).toContain('application/a2a+json');
+    expect(malformed.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32700,
+        data: [expect.objectContaining({ reason: 'A2A_PARSE_ERROR' })],
+      },
+    });
+    expect(invalid.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32600,
+        data: [expect.objectContaining({ reason: 'A2A_INVALID_REQUEST' })],
+      },
+    });
+    expect(missingMethod.json()).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32600,
+        data: [expect.objectContaining({ reason: 'A2A_INVALID_REQUEST' })],
+      },
+    });
+    expect(packetCount.count).toBe(0);
+  });
+
+  test('A2A receive opt-in remains a non-advertising non-accepting stub', async () => {
+    const previous = process.env.HANDOFF_ENABLE_A2A;
+    process.env.HANDOFF_ENABLE_A2A = '1';
+    try {
+      const { service, db } = createService();
+      const app = buildApiServer({ service });
+      service.createWorkspace({ name: 'API Team', adminHandle: 'sam', adminName: 'Sam' });
+
+      const cardResponse = await app.inject({
+        method: 'GET',
+        url: '/.well-known/agent-card.json',
+      });
+      const notImplemented = await app.inject({
+        method: 'POST',
+        url: '/a2a',
+        payload: {
+          jsonrpc: '2.0',
+          id: 'req-enabled',
+          method: 'SendMessage',
+          params: { message: { parts: [] } },
+        },
+      });
+      const packetCount = db.prepare('SELECT COUNT(*) AS count FROM packets').get() as {
+        count: number;
+      };
+
+      expect(cardResponse.json()).toMatchObject({
+        supportedInterfaces: [],
+        capabilities: { publicA2aReceiving: false },
+        metadata: { public_a2a_receiving: 'not_implemented' },
+      });
+      expect(notImplemented.json()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 'req-enabled',
+        error: {
+          code: -32004,
+          data: [expect.objectContaining({ reason: 'A2A_NOT_IMPLEMENTED' })],
+        },
+      });
+      expect(packetCount.count).toBe(0);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HANDOFF_ENABLE_A2A;
+      } else {
+        process.env.HANDOFF_ENABLE_A2A = previous;
+      }
+    }
   });
 
   test('unsupported source clients return UNSUPPORTED_CLIENT instead of INTERNAL_ERROR', async () => {

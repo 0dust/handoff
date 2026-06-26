@@ -472,7 +472,8 @@ The package ships `dist`, top-level docs, examples, fixtures, and this README.
 ## Current Limits
 
 - Handoff does not provide a hosted cloud service. You host the workspace/server.
-- Slack is not a first-class adapter. Handoff is meant to replace raw paste/chat handoff with structured agent-to-agent context transfer.
+- Slack is not a first-class adapter. Handoff is meant to replace raw paste/chat handoff with human-approved Relay Packet handoff between MCP-connected coding agents.
+- A2A is internal adapter infrastructure only. Handoff does not expose public A2A protocol support, public A2A endpoints, or an external A2A compatibility promise.
 - Literal client-specific slash command registration is not shipped. Use MCP tools and optional local command templates in your client.
 - SQLite is the default storage for local/self-hosted teams. Postgres is intentionally left as a future storage adapter.
 - Handoff does not passively capture sessions, build a team memory index, or apply another teammate's patch automatically.
