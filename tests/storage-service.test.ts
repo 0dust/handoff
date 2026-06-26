@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
+import { hashToken } from '../src/identity.js';
 import { createRelayDatabase } from '../src/storage/database.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { PacketTransportRepository } from '../src/storage/packet-transport-table.js';
@@ -43,6 +44,38 @@ function approval(
   },
 ) {
   return service.createApprovalToken(input).approval_token;
+}
+
+function approvalTokenConsumed(db: ReturnType<typeof createRelayDatabase>, token: string): boolean {
+  const row = db
+    .prepare('SELECT consumed_at FROM approval_tokens WHERE token_hash = ?')
+    .get(hashToken(token)) as { consumed_at: string | null } | undefined;
+  if (!row) {
+    throw new Error('Expected approval token row.');
+  }
+  return row.consumed_at !== null;
+}
+
+function insertCorruptTransportRow(
+  db: ReturnType<typeof createRelayDatabase>,
+  input: { packetId: string; workspaceId: string; suffix: string },
+): void {
+  db.prepare(
+    `INSERT INTO packet_transports
+    (id, packet_id, workspace_id, protocol, task_id, artifact_id, trust_receipt_artifact_id,
+     packet_hash, task_state, direction, trust_receipt, created_at, updated_at)
+    VALUES (?, ?, ?, 'a2a-internal', ?, ?, ?, ?, 'TASK_STATE_WORKING', 'outbound', '{}', ?, ?)`,
+  ).run(
+    `ptr_corrupt_${input.suffix}`,
+    input.packetId,
+    input.workspaceId,
+    `tsk_${input.packetId}`,
+    `art_${input.packetId}_relay_packet`,
+    `art_${input.packetId}_trust_receipt`,
+    `sha256:${'c'.repeat(64)}`,
+    new Date().toISOString(),
+    new Date().toISOString(),
+  );
 }
 
 describe('workspace identity and permissions', () => {
@@ -722,6 +755,154 @@ describe('two-user ask/share flows', () => {
       service.getPacketForMember({ authToken: workspace.admin.token, packetId: draft.id }).packet
         .status,
     ).toBe('delivered');
+  });
+
+  test('adapter mirror failures do not consume approval tokens', async () => {
+    {
+      const { service, db, workspace } = await createTwoMembers();
+      const draft = service.createShareDraft({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        finding: 'Send should roll back approval token consumption.',
+        title: 'Atomic send token',
+        summary: 'A corrupt mirror row should not consume send approval.',
+        sourceClient: 'codex',
+      });
+      insertCorruptTransportRow(db, {
+        packetId: draft.id,
+        workspaceId: workspace.workspace.id,
+        suffix: 'send',
+      });
+      const sendApproval = approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      });
+
+      expect(() =>
+        service.approveAndSend({
+          authToken: workspace.admin.token,
+          packetId: draft.id,
+          approvalToken: sendApproval,
+        }),
+      ).toThrow();
+      expect(
+        service.getPacketForMember({ authToken: workspace.admin.token, packetId: draft.id }).packet
+          .status,
+      ).toBe('pending_sender_approval');
+      expect(approvalTokenConsumed(db, sendApproval)).toBe(false);
+    }
+
+    {
+      const { service, db, workspace, alice } = await createTwoMembers();
+      const draft = service.createShareDraft({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        finding: 'Hydrate should roll back approval token consumption.',
+        title: 'Atomic hydrate token',
+        summary: 'A corrupt mirror row should not consume hydrate approval.',
+        sourceClient: 'codex',
+      });
+      service.approveAndSend({
+        authToken: workspace.admin.token,
+        packetId: draft.id,
+        approvalToken: approval(service, {
+          authToken: workspace.admin.token,
+          approvalSecret: workspace.admin.approval_secret,
+          packetId: draft.id,
+          action: 'send',
+        }),
+      });
+      service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+      service.acceptPacket({ authToken: alice.member.token, packetId: draft.id });
+      db.prepare('UPDATE packet_transports SET trust_receipt = ? WHERE packet_id = ?').run(
+        '{}',
+        draft.id,
+      );
+      const hydrateApproval = approval(service, {
+        authToken: alice.member.token,
+        approvalSecret: alice.member.approval_secret,
+        packetId: draft.id,
+        action: 'hydrate',
+      });
+
+      expect(() =>
+        service.hydratePacket({
+          authToken: alice.member.token,
+          packetId: draft.id,
+          client: 'codex',
+          approvalToken: hydrateApproval,
+        }),
+      ).toThrow();
+      expect(
+        service.getPacketForMember({ authToken: workspace.admin.token, packetId: draft.id }).packet
+          .status,
+      ).toBe('accepted');
+      expect(approvalTokenConsumed(db, hydrateApproval)).toBe(false);
+    }
+
+    {
+      const { service, db, workspace, alice } = await createTwoMembers();
+      const draft = service.createAskDraft({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        question: 'Can you check reply approval rollback?',
+        title: 'Atomic reply token',
+        summary: 'A corrupt mirror row should not consume reply approval.',
+        sourceClient: 'codex',
+      });
+      service.approveAndSend({
+        authToken: workspace.admin.token,
+        packetId: draft.id,
+        approvalToken: approval(service, {
+          authToken: workspace.admin.token,
+          approvalSecret: workspace.admin.approval_secret,
+          packetId: draft.id,
+          action: 'send',
+        }),
+      });
+      service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+      service.acceptPacket({ authToken: alice.member.token, packetId: draft.id });
+      const reply = service.createReplyDraft({
+        authToken: alice.member.token,
+        packetId: draft.id,
+        answer: 'The retry path should persist the token first.',
+        summary: 'Reply approval rollback coverage.',
+        sourceClient: 'codex',
+      });
+      insertCorruptTransportRow(db, {
+        packetId: reply.id,
+        workspaceId: workspace.workspace.id,
+        suffix: 'reply',
+      });
+      const replyApproval = approval(service, {
+        authToken: alice.member.token,
+        approvalSecret: alice.member.approval_secret,
+        packetId: reply.id,
+        action: 'reply',
+      });
+
+      expect(() =>
+        service.approveReply({
+          authToken: alice.member.token,
+          replyPacketId: reply.id,
+          approvalToken: replyApproval,
+        }),
+      ).toThrow();
+      expect(
+        service.getPacketForMember({ authToken: workspace.admin.token, packetId: draft.id }).packet
+          .status,
+      ).toBe('response_drafting');
+      expect(
+        service.getPacketForMember({ authToken: alice.member.token, packetId: reply.id }).packet
+          .status,
+      ).toBe('pending_recipient_approval');
+      expect(approvalTokenConsumed(db, replyApproval)).toBe(false);
+    }
   });
 
   test('completes share approve inbox hydrate archive', async () => {

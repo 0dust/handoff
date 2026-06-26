@@ -910,7 +910,7 @@ export class RelayService {
         approvalToken: input.approvalToken,
       });
     }
-    this.consumeApprovalToken({
+    const approvalTokenId = this.validateApprovalToken({
       actor,
       packet,
       action: 'send',
@@ -932,6 +932,7 @@ export class RelayService {
     }
 
     const send = this.db.transaction(() => {
+      this.consumeApprovalToken(approvalTokenId);
       packet = this.transitionPacket(packet, 'sent', actor, 'sender');
       const approveReceipt = this.recordAudit({
         action: 'approve',
@@ -1128,13 +1129,14 @@ export class RelayService {
     const actor = this.authenticate(input.authToken);
     let packet = this.getPacket(input.packetId);
     this.requireRecipient(actor, packet);
-    this.consumeApprovalToken({
+    const approvalTokenId = this.validateApprovalToken({
       actor,
       packet,
       action: 'hydrate',
       approvalToken: input.approvalToken,
     });
     const hydrate = this.db.transaction(() => {
+      this.consumeApprovalToken(approvalTokenId);
       const targetStatus = 'hydrated';
       packet = this.transitionPacket(packet, targetStatus, actor, 'recipient');
       this.markNotificationRead(packet.packet_id, actor.id);
@@ -1233,13 +1235,14 @@ export class RelayService {
     if (reply.packet_type !== 'reply') {
       throw relayError('INVALID_INPUT', 'Packet is not a reply.', 400);
     }
-    this.consumeApprovalToken({
+    const approvalTokenId = this.validateApprovalToken({
       actor,
       packet: reply,
       action: 'reply',
       approvalToken: input.approvalToken,
     });
     const approve = this.db.transaction(() => {
+      this.consumeApprovalToken(approvalTokenId);
       reply = this.transitionPacket(reply, 'replied', actor, 'recipient');
       for (const recipientId of reply.recipient_member_ids) {
         this.createNotification(reply, recipientId);
@@ -1895,12 +1898,12 @@ export class RelayService {
     }
   }
 
-  private consumeApprovalToken(input: {
+  private validateApprovalToken(input: {
     actor: MemberRecord;
     packet: RelayPacket;
     action: ApprovalAction;
     approvalToken?: string;
-  }): void {
+  }): string {
     if (!input.approvalToken) {
       throw relayError(
         'FORBIDDEN',
@@ -1924,9 +1927,23 @@ export class RelayService {
       throw relayError('FORBIDDEN', 'Invalid, expired, or consumed approval token.', 403);
     }
     this.assertApprovalTokenAllowed(input.actor, input.packet, input.action);
-    this.db
-      .prepare('UPDATE approval_tokens SET consumed_at = ? WHERE id = ?')
-      .run(new Date().toISOString(), row.id);
+    return row.id;
+  }
+
+  private consumeApprovalToken(approvalTokenId: string): void {
+    const consumedAt = new Date().toISOString();
+    const consumed = this.db
+      .prepare(
+        `UPDATE approval_tokens
+        SET consumed_at = ?
+        WHERE id = ?
+          AND consumed_at IS NULL
+          AND expires_at >= ?`,
+      )
+      .run(consumedAt, approvalTokenId, consumedAt);
+    if (consumed.changes !== 1) {
+      throw relayError('FORBIDDEN', 'Invalid, expired, or consumed approval token.', 403);
+    }
   }
 
   private transitionPacket(
