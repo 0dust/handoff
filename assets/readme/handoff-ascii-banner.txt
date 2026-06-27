@@ -1,0 +1,5 @@
++--------------------------------------------------------------+
+| Handoff                                                      |
+| agent/A -> selected context -> [reviewed packet] -> agent/B  |
+|              human approval gates both sides                 |
++--------------------------------------------------------------+

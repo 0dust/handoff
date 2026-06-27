@@ -1,7 +1,7 @@
 {
   "name": "handoff-relay",
-  "version": "0.1.4",
-  "description": "Human-approved context handoffs between coding agents.",
+  "version": "0.1.5",
+  "description": "Human-approved context packets for coding agents.",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
@@ -23,9 +23,15 @@
   },
   "keywords": [
     "agent",
+    "ai-agents",
+    "approval",
+    "context",
+    "developer-tools",
+    "local-first",
     "mcp",
     "coding-agents",
     "handoff",
+    "human-in-the-loop",
     "sqlite"
   ],
   "repository": {
@@ -43,8 +49,11 @@
     "handoff": "dist/cli.js"
   },
   "files": [
+    "assets/readme",
+    "CONTRIBUTING.md",
     "dist",
     "docs/advanced-manual-setup.md",
+    "docs/architecture.md",
     "docs/claude-code-setup.md",
     "docs/codex-setup.md",
     "docs/demo-video-script.md",
@@ -52,11 +61,13 @@
     "docs/launch-copy.md",
     "docs/local-self-hosting.md",
     "docs/packet-schema.md",
+    "docs/product-hunt-launch-kit.md",
     "docs/security-privacy.md",
     "docs/troubleshooting.md",
     "examples",
     "fixtures",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "build": "tsup src/cli.ts src/index.ts src/api/server.ts src/mcp/server.ts --format esm --dts --clean --splitting false",

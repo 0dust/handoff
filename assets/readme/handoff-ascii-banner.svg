@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 300" role="img" aria-labelledby="title desc">
+  <title id="title">Handoff ASCII banner</title>
+  <desc id="desc">A terminal-style ASCII banner for Handoff with a reviewed packet route.</desc>
+  <defs>
+    <filter id="terminalShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#171412" flood-opacity="0.16"/>
+    </filter>
+    <style>
+      .terminal { fill: #1f2422; stroke: #81796e; }
+      .prompt { fill: #8ed9d0; }
+      .ascii { fill: #f4efe5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace; font-size: 24px; font-weight: 700; letter-spacing: 0; }
+      .caption { fill: #d8c791; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace; font-size: 22px; font-weight: 700; letter-spacing: 0; }
+      .muted { fill: #aaa49a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace; font-size: 18px; font-weight: 600; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect x="36" y="32" width="1088" height="236" rx="8" class="terminal" stroke-width="4" filter="url(#terminalShadow)"/>
+  <circle cx="70" cy="62" r="7" fill="#d66a55"/>
+  <circle cx="96" cy="62" r="7" fill="#d99a2b"/>
+  <circle cx="122" cy="62" r="7" fill="#2f8f88"/>
+
+  <text x="70" y="118" class="ascii">+--------------------------------------------------------------+</text>
+  <text x="70" y="150" class="ascii">| Handoff                                                      |</text>
+  <text x="70" y="182" class="caption">| agent/A -&gt; selected context -&gt; [reviewed packet] -&gt; agent/B  |</text>
+  <text x="70" y="214" class="muted">|              human approval gates both sides                 |</text>
+  <text x="70" y="246" class="ascii">+--------------------------------------------------------------+</text>
+</svg>
