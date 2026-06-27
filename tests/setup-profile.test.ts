@@ -1305,6 +1305,45 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('local server startup refuses an unverifiable saved Handoff server before starting the preferred port', async () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    const server = await spawnFakeHandoffServer('srv_saved_unknown_database_test');
+    const preferredPort = await findAvailablePort({ host: '127.0.0.1', preferredPort: 39341 });
+    const startMarkerPath = join(home, 'should-not-start.marker');
+    const fakeCliPath = join(home, 'should-not-start.js');
+    writeFileSync(
+      fakeCliPath,
+      `require('node:fs').writeFileSync(${JSON.stringify(startMarkerPath)}, 'started'); setInterval(() => {}, 1000);\n`,
+    );
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+
+      await expect(
+        ensureLocalServer({
+          dbPath,
+          home,
+          host: '127.0.0.1',
+          port: preferredPort,
+          readinessIntervalMs: 1,
+          readinessTimeoutMs: 50,
+          serverUrl: server.serverUrl,
+        }),
+      ).rejects.toThrow(/Saved profile server .*cannot verify its database/);
+      expect(existsSync(startMarkerPath)).toBe(false);
+      expect(readServerMetadata(home)).toBeUndefined();
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+      await killChildAndWait(server.child);
+    }
+  });
+
   test('local server startup refuses to multiply a different Handoff database', async () => {
     const home = tempHome();
     const dbPath = join(home, 'data', 'default', 'relay.db');
@@ -1330,6 +1369,49 @@ describe('invite, join, LAN, and doctor setup flows', () => {
           readinessTimeoutMs: 50,
         }),
       ).rejects.toThrow(/already has a Handoff server for a different local database/);
+      expect(readServerMetadata(home)).toBeUndefined();
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+      await killChildAndWait(server.child);
+    }
+  });
+
+  test('local server startup refuses a saved Handoff server for a different database before starting the preferred port', async () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    const otherDbPath = join(home, 'data', 'other', 'relay.db');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    mkdirSync(join(home, 'data', 'other'), { recursive: true });
+    const server = await spawnFakeHandoffServer('srv_saved_different_database_test', {
+      databaseId: databaseIdForPath(otherDbPath),
+    });
+    const preferredPort = await findAvailablePort({ host: '127.0.0.1', preferredPort: 39342 });
+    const startMarkerPath = join(home, 'should-not-start.marker');
+    const fakeCliPath = join(home, 'should-not-start.js');
+    writeFileSync(
+      fakeCliPath,
+      `require('node:fs').writeFileSync(${JSON.stringify(startMarkerPath)}, 'started'); setInterval(() => {}, 1000);\n`,
+    );
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+
+      await expect(
+        ensureLocalServer({
+          dbPath,
+          home,
+          host: '127.0.0.1',
+          port: preferredPort,
+          readinessIntervalMs: 1,
+          readinessTimeoutMs: 50,
+          serverUrl: server.serverUrl,
+        }),
+      ).rejects.toThrow(/Saved profile server .*different local database/);
+      expect(existsSync(startMarkerPath)).toBe(false);
       expect(readServerMetadata(home)).toBeUndefined();
     } finally {
       if (previousCliPath === undefined) {

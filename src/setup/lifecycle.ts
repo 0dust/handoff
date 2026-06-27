@@ -161,20 +161,16 @@ export function createDefaultServerLifecycle(): ServerLifecycle {
 
 export async function ensureLocalServer(input: EnsureServerInput): Promise<EnsureServerResult> {
   const expectedDatabaseId = databaseIdForPath(input.dbPath);
-  if (
-    input.serverUrl &&
-    input.serverUrl !== 'local-db' &&
-    (await probeHandoffServer(input.serverUrl, {
+  if (input.serverUrl && input.serverUrl !== 'local-db') {
+    const savedServer = await inspectReusableHandoffServer({
       expectedDatabaseId,
-      timeoutMs: 1_000,
-    })) &&
-    canReuseHealthyServer(input)
-  ) {
-    return {
-      bindHost: readServerMetadata(input.home)?.host,
-      status: 'reused',
+      input,
       serverUrl: input.serverUrl,
-    };
+      sourceDescription: `Saved profile server ${input.serverUrl}`,
+    });
+    if (savedServer) {
+      return savedServer;
+    }
   }
   if (process.env.HANDOFF_TEST_SKIP_SERVER === '1') {
     return { status: 'skipped', serverUrl: 'local-db' };
@@ -252,9 +248,23 @@ async function inspectPreferredPortHandoffServer(
   expectedDatabaseId: string,
 ): Promise<EnsureServerResult | undefined> {
   const serverUrl = loopbackServerUrl(input.host, input.port);
+  return inspectReusableHandoffServer({
+    expectedDatabaseId,
+    input,
+    serverUrl,
+    sourceDescription: `Port ${input.port}`,
+  });
+}
+
+async function inspectReusableHandoffServer(options: {
+  expectedDatabaseId: string;
+  input: EnsureServerInput;
+  serverUrl: string;
+  sourceDescription: string;
+}): Promise<EnsureServerResult | undefined> {
   let health: HandoffHealth;
   try {
-    health = await readHandoffHealth(serverUrl, { timeoutMs: 1_000 });
+    health = await readHandoffHealth(options.serverUrl, { timeoutMs: 1_000 });
   } catch {
     return undefined;
   }
@@ -263,36 +273,38 @@ async function inspectPreferredPortHandoffServer(
   }
   if (!health.database_id) {
     throw new Error(
-      `Port ${input.port} already has a Handoff server, but this version cannot verify its database. Run \`npx -y handoff-relay server stop\`, restart stale Handoff processes, or pass --port <free-port>.`,
+      `${options.sourceDescription} already has a Handoff server, but this version cannot verify its database. Run \`npx -y handoff-relay server stop\`, restart stale Handoff processes, or pass --port <free-port>.`,
     );
   }
-  if (health.database_id !== expectedDatabaseId) {
+  if (health.database_id !== options.expectedDatabaseId) {
     throw new Error(
-      `Port ${input.port} already has a Handoff server for a different local database. Use --port <free-port> or stop the other Handoff server first.`,
+      `${options.sourceDescription} already has a Handoff server for a different local database. Use --port <free-port> or stop the other Handoff server first.`,
     );
   }
-  if (!canReuseHealthyServerAtUrl(input, serverUrl, health.bind_host)) {
+  if (!canReuseHealthyServerAtUrl(options.input, options.serverUrl, health.bind_host)) {
     throw new Error(
-      `Port ${input.port} already has a matching Handoff server, but it is not LAN-reachable. Stop it first or pass --port <free-port>.`,
+      `${options.sourceDescription} already has a matching Handoff server, but it is not LAN-reachable. Stop it first or pass --port <free-port>.`,
     );
   }
 
-  const logPath = join(input.home, 'logs', `server-${input.port}.log`);
-  writeServerMetadata(input.home, {
+  const port = portFromServerUrl(options.serverUrl) ?? options.input.port;
+  const host = health.bind_host ?? hostFromServerUrl(options.serverUrl) ?? options.input.host;
+  const logPath = join(options.input.home, 'logs', `server-${port}.log`);
+  writeServerMetadata(options.input.home, {
     pid: health.pid,
-    dbPath: input.dbPath,
-    host: health.bind_host ?? input.host,
-    port: input.port,
+    dbPath: options.input.dbPath,
+    host,
+    port,
     serverId: health.server_id,
-    serverUrl,
+    serverUrl: options.serverUrl,
     logPath,
     startedAt: new Date().toISOString(),
   });
   return {
-    bindHost: health.bind_host ?? input.host,
+    bindHost: host,
     status: 'reused',
-    serverUrl,
-    port: input.port,
+    serverUrl: options.serverUrl,
+    port,
     pid: health.pid,
     logPath,
   };
@@ -397,10 +409,6 @@ async function inspectRecordedServerIdentity(
   }
 }
 
-function canReuseHealthyServer(input: EnsureServerInput): boolean {
-  return canReuseHealthyServerAtUrl(input, input.serverUrl, readServerMetadata(input.home)?.host);
-}
-
 function canReuseHealthyServerAtUrl(
   input: EnsureServerInput,
   serverUrl: string | undefined,
@@ -495,6 +503,26 @@ function candidatePort(preferredPort: number, offset: number): number {
 
 function loopbackServerUrl(host: string, port: number): string {
   return `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`;
+}
+
+function portFromServerUrl(serverUrl: string): number | undefined {
+  try {
+    const parsed = new URL(serverUrl);
+    if (parsed.port) return Number(parsed.port);
+    if (parsed.protocol === 'http:') return 80;
+    if (parsed.protocol === 'https:') return 443;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function hostFromServerUrl(serverUrl: string): string | undefined {
+  try {
+    return new URL(serverUrl).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function isPrivateIpv4(address: string): boolean {
