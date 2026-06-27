@@ -30,18 +30,18 @@ export interface NotificationDispatcherOptions {
   onError?: (error: Error, channel: 'desktop' | 'webhook') => void;
 }
 
+const notificationActions: Record<NotificationSummary['packet_type'], string> = {
+  ask: 'is asking for help',
+  clarification: 'requested clarification',
+  reply: 'replied',
+  share: 'shared context',
+};
+
 export function formatNotification(summary: NotificationSummary): string {
   const sender = summary.sender_handle.startsWith('@')
     ? summary.sender_handle
     : `@${summary.sender_handle}`;
-  const action =
-    summary.packet_type === 'ask'
-      ? 'is asking for help'
-      : summary.packet_type === 'share'
-        ? 'shared context'
-        : summary.packet_type === 'reply'
-          ? 'replied'
-          : 'requested clarification';
+  const action = notificationActions[summary.packet_type];
   return `${sender} ${action} on ${summary.title} in ${summary.project}. Review packet?`;
 }
 

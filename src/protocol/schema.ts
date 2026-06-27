@@ -199,6 +199,25 @@ export type RedactionFinding = z.infer<typeof redactionFindingSchema>;
 export type HydrationPolicy = z.infer<typeof hydrationPolicySchema>;
 export type ProjectIdentity = z.infer<typeof projectIdentitySchema>;
 
+export const terminalPacketStatuses = [
+  'archived',
+  'closed_resolved',
+  'closed_unresolved',
+  'declined',
+  'expired',
+  'superseded',
+] as const satisfies readonly PacketStatus[];
+
+export const draftLikePacketStatuses = [
+  'draft',
+  'pending_sender_approval',
+  'pending_recipient_approval',
+] as const satisfies readonly PacketStatus[];
+
+export function isTerminalPacketStatus(status: PacketStatus): boolean {
+  return (terminalPacketStatuses as readonly PacketStatus[]).includes(status);
+}
+
 export interface ContextBudgetLimits {
   summaryCharacters: number;
   mainTextCharacters: number;

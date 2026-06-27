@@ -27,6 +27,7 @@ import {
   normalizeClaim,
   normalizeEvidence,
   packetSchema,
+  isTerminalPacketStatus,
   validateContextBudget,
   type BuildPacketDraftInput,
   type PacketStatus,
@@ -550,15 +551,7 @@ export class RelayService {
           WHERE id = ?`,
         )
         .run(input.displayName, hashToken(token), hashToken(approvalSecret), input.memberId);
-      const invalidated = this.db
-        .prepare(
-          `UPDATE approval_tokens
-          SET consumed_at = ?
-          WHERE actor_member_id = ?
-            AND consumed_at IS NULL`,
-        )
-        .run(reissuedAt, input.memberId);
-      invalidatedApprovalTokens = invalidated.changes;
+      invalidatedApprovalTokens = this.invalidateApprovalTokens(input.memberId, reissuedAt);
       this.recordAudit({
         action: 'reissue_invite_credentials',
         actorMemberId: input.memberId,
@@ -724,14 +717,7 @@ export class RelayService {
       this.db
         .prepare('UPDATE members SET status = ?, revoked_at = ? WHERE id = ?')
         .run('revoked', revokedAt, input.member.id);
-      this.db
-        .prepare(
-          `UPDATE approval_tokens
-          SET consumed_at = ?
-          WHERE actor_member_id = ?
-            AND consumed_at IS NULL`,
-        )
-        .run(revokedAt, input.member.id);
+      this.invalidateApprovalTokens(input.member.id, revokedAt);
     });
     deactivate();
     this.recordAudit({
@@ -773,19 +759,12 @@ export class RelayService {
       this.db
         .prepare('UPDATE members SET approval_secret_hash = ? WHERE id = ?')
         .run(hashToken(approvalSecret), member.id);
-      const invalidated = this.db
-        .prepare(
-          `UPDATE approval_tokens
-          SET consumed_at = ?
-          WHERE actor_member_id = ?
-            AND consumed_at IS NULL`,
-        )
-        .run(rotatedAt, member.id);
+      const invalidatedApprovalTokens = this.invalidateApprovalTokens(member.id, rotatedAt);
       this.recordAudit({
         action: 'rotate_approval_secret',
         actorMemberId: member.id,
         workspaceId: member.workspace_id,
-        metadata: { invalidated_approval_tokens: invalidated.changes },
+        metadata: { invalidated_approval_tokens: invalidatedApprovalTokens },
       });
     });
     rotate();
@@ -975,17 +954,7 @@ export class RelayService {
     const member = this.requireMember(input.authToken, input.workspaceId);
     return this.listWorkspacePackets(input.workspaceId)
       .filter((packet) => packet.recipient_member_ids.includes(member.id))
-      .filter(
-        (packet) =>
-          ![
-            'archived',
-            'closed_resolved',
-            'closed_unresolved',
-            'declined',
-            'expired',
-            'superseded',
-          ].includes(packet.status),
-      );
+      .filter((packet) => !isTerminalPacketStatus(packet.status));
   }
 
   listNotifications(input: { authToken: string; workspaceId: string }): NotificationRecord[] {
@@ -1187,10 +1156,8 @@ export class RelayService {
     }
 
     const draftReply = this.db.transaction(() => {
-      if (original.status === 'accepted' || original.status === 'hydrated') {
-        original = this.transitionPacket(original, 'response_drafting', actor, 'recipient');
-        this.recordA2aPacketTransport(original);
-      }
+      original = this.transitionPacket(original, 'response_drafting', actor, 'recipient');
+      this.recordA2aPacketTransport(original);
 
       const packet = this.preparePacket(
         buildPacketDraft({
@@ -1433,10 +1400,11 @@ export class RelayService {
   ): PacketSearchResult[] {
     const actor = this.requireMember(input.authToken, input.workspaceId);
     const query = input.query?.trim().toLowerCase() ?? '';
+    const adminBodyAccess = this.adminBodyAccessFor(actor, input.workspaceId);
     const results = this.packets.search({
       actorIsAdmin: actor.role === 'admin',
       actorMemberId: actor.id,
-      adminBodyAccess: this.adminBodyAccessFor(actor, input.workspaceId),
+      adminBodyAccess,
       filters: {
         ...this.resolveRepositoryFilters(input.workspaceId, input),
         query,
@@ -1449,7 +1417,7 @@ export class RelayService {
       workspaceId: input.workspaceId,
       metadata: { query, filters: this.auditFilterMetadata(input) },
     });
-    return results.map((packet) => this.toSearchResult(actor, packet));
+    return results.map((packet) => this.toSearchResult(actor, packet, adminBodyAccess));
   }
 
   listHistory(
@@ -1463,10 +1431,11 @@ export class RelayService {
     const actor = this.requireMember(input.authToken, input.workspaceId);
     const filter = input.filter ?? 'all';
     const query = input.query?.trim().toLowerCase() ?? '';
+    const adminBodyAccess = this.adminBodyAccessFor(actor, input.workspaceId);
     const results = this.packets.search({
       actorIsAdmin: actor.role === 'admin',
       actorMemberId: actor.id,
-      adminBodyAccess: this.adminBodyAccessFor(actor, input.workspaceId),
+      adminBodyAccess,
       filters: {
         ...this.resolveRepositoryFilters(input.workspaceId, input),
         historyFilter: filter,
@@ -1480,7 +1449,7 @@ export class RelayService {
       workspaceId: input.workspaceId,
       metadata: { query, history_filter: filter, filters: this.auditFilterMetadata(input) },
     });
-    return results.map((packet) => this.toSearchResult(actor, packet));
+    return results.map((packet) => this.toSearchResult(actor, packet, adminBodyAccess));
   }
 
   listAuditReceipts(input: {
@@ -1730,7 +1699,11 @@ export class RelayService {
     );
   }
 
-  private canReadBody(actor: MemberRecord, packet: RelayPacket): boolean {
+  private canReadBody(
+    actor: MemberRecord,
+    packet: RelayPacket,
+    input: { adminBodyAccess?: boolean } = {},
+  ): boolean {
     if (actor.workspace_id !== packet.workspace_id || actor.status !== 'active') {
       return false;
     }
@@ -1738,7 +1711,7 @@ export class RelayService {
       return true;
     }
     if (actor.role === 'admin') {
-      return this.getWorkspace(packet.workspace_id).admin_body_access;
+      return input.adminBodyAccess ?? this.getWorkspace(packet.workspace_id).admin_body_access;
     }
     return false;
   }
@@ -1756,7 +1729,11 @@ export class RelayService {
     }
   }
 
-  private toSearchResult(actor: MemberRecord, packet: RelayPacket): PacketSearchResult {
+  private toSearchResult(
+    actor: MemberRecord,
+    packet: RelayPacket,
+    adminBodyAccess: boolean,
+  ): PacketSearchResult {
     return {
       packet_id: packet.packet_id,
       packet_type: packet.packet_type,
@@ -1772,7 +1749,7 @@ export class RelayService {
       updated_at: packet.updated_at,
       expires_at: packet.expires_at,
       recheck_by: packet.recheck_by,
-      body_access: this.canReadBody(actor, packet),
+      body_access: this.canReadBody(actor, packet, { adminBodyAccess }),
     };
   }
 
@@ -1944,6 +1921,17 @@ export class RelayService {
     if (consumed.changes !== 1) {
       throw relayError('FORBIDDEN', 'Invalid, expired, or consumed approval token.', 403);
     }
+  }
+
+  private invalidateApprovalTokens(memberId: string, consumedAt: string): number {
+    return this.db
+      .prepare(
+        `UPDATE approval_tokens
+        SET consumed_at = ?
+        WHERE actor_member_id = ?
+          AND consumed_at IS NULL`,
+      )
+      .run(consumedAt, memberId).changes;
   }
 
   private transitionPacket(

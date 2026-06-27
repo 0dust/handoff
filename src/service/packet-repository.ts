@@ -1,6 +1,12 @@
 import { packetColumnNames, packetMutableColumnNames } from '../storage/packet-table.js';
 import type { RelayDatabase } from '../storage/database.js';
-import { packetSchema, type PacketStatus, type RelayPacket } from '../protocol/schema.js';
+import {
+  draftLikePacketStatuses,
+  packetSchema,
+  terminalPacketStatuses,
+  type PacketStatus,
+  type RelayPacket,
+} from '../protocol/schema.js';
 
 export interface PacketRow {
   id: string;
@@ -140,6 +146,13 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
+function statusListSql(statuses: readonly PacketStatus[]): string {
+  return statuses.map((status) => `'${status}'`).join(', ');
+}
+
+const terminalStatusSql = statusListSql(terminalPacketStatuses);
+const draftLikeStatusSql = statusListSql(draftLikePacketStatuses);
+
 export class PacketRepository {
   constructor(private readonly db: RelayDatabase) {}
 
@@ -243,23 +256,15 @@ export class PacketRepository {
     params: Record<string, unknown>,
     filters: PacketRepositoryFilters,
   ): void {
-    const terminalStatuses = [
-      'archived',
-      'closed_resolved',
-      'closed_unresolved',
-      'declined',
-      'expired',
-      'superseded',
-    ];
     switch (filters.historyFilter ?? 'all') {
       case 'all':
         return;
       case 'closed':
-        where.push(`status IN (${terminalStatuses.map((status) => `'${status}'`).join(', ')})`);
+        where.push(`status IN (${terminalStatusSql})`);
         return;
       case 'drafts':
         where.push('sender_member_id = @draftActorMemberId');
-        where.push("status IN ('pending_sender_approval', 'pending_recipient_approval', 'draft')");
+        where.push(`status IN (${draftLikeStatusSql})`);
         params.draftActorMemberId = params.actorMemberId;
         return;
       case 'sent':
@@ -268,10 +273,8 @@ export class PacketRepository {
         params.sentActorMemberId = params.actorMemberId;
         return;
       case 'open':
-        where.push(`status NOT IN (${terminalStatuses.map((status) => `'${status}'`).join(', ')})`);
-        where.push(
-          "status NOT IN ('draft', 'pending_sender_approval', 'pending_recipient_approval')",
-        );
+        where.push(`status NOT IN (${terminalStatusSql})`);
+        where.push(`status NOT IN (${draftLikeStatusSql})`);
         return;
     }
   }
