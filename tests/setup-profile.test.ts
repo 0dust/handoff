@@ -42,6 +42,7 @@ import { detectMcpConfigs, installMcpConfig } from '../src/setup/mcp-config.js';
 import { createProfileStore } from '../src/setup/profile.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createRelayDatabase } from '../src/storage/database.js';
+import { databaseIdForPath } from '../src/storage/database-id.js';
 
 const openApps: Array<{ close: () => Promise<unknown> }> = [];
 
@@ -125,8 +126,11 @@ function writeServerMetadataFixture(
 
 async function spawnFakeHandoffServer(
   serverId = 'srv_test',
-  input: { script?: string; startupTimeoutMs?: number } = {},
+  input: { databaseId?: string; script?: string; startupTimeoutMs?: number } = {},
 ) {
+  const databaseIdLine = input.databaseId
+    ? `, database_id: ${JSON.stringify(input.databaseId)}`
+    : '';
   const script =
     input.script ??
     [
@@ -135,7 +139,7 @@ async function spawnFakeHandoffServer(
       'const server = http.createServer((request, response) => {',
       "  if (request.url === '/health') {",
       "    response.writeHead(200, { 'content-type': 'application/json' });",
-      "    response.end(JSON.stringify({ name: 'handoff', ok: true, pid: process.pid, server_id: serverId, version: 'test' }));",
+      `    response.end(JSON.stringify({ name: 'handoff', ok: true, pid: process.pid, server_id: serverId, version: 'test'${databaseIdLine} }));`,
       '    return;',
       '  }',
       '  response.writeHead(404).end();',
@@ -1220,6 +1224,120 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(selected).not.toBe(address.port);
     } finally {
       await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  test('local server startup reuses a matching Handoff server on the preferred port', async () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    const server = await spawnFakeHandoffServer('srv_reuse_preferred_test', {
+      databaseId: databaseIdForPath(dbPath),
+    });
+    const fakeCliPath = join(home, 'should-not-start.js');
+    writeFileSync(fakeCliPath, 'process.exit(42);\n');
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+
+      const result = await ensureLocalServer({
+        dbPath,
+        home,
+        host: '127.0.0.1',
+        port: server.port,
+        readinessIntervalMs: 1,
+        readinessTimeoutMs: 50,
+      });
+
+      expect(result).toMatchObject({
+        pid: server.child.pid,
+        port: server.port,
+        serverUrl: server.serverUrl,
+        status: 'reused',
+      });
+      expect(readServerMetadata(home)).toMatchObject({
+        pid: server.child.pid,
+        port: server.port,
+        serverId: server.serverId,
+        serverUrl: server.serverUrl,
+      });
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+      await killChildAndWait(server.child);
+    }
+  });
+
+  test('local server startup refuses to multiply an unverifiable Handoff server', async () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    const server = await spawnFakeHandoffServer('srv_unknown_database_test');
+    const fakeCliPath = join(home, 'should-not-start.js');
+    writeFileSync(fakeCliPath, 'process.exit(42);\n');
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+
+      await expect(
+        ensureLocalServer({
+          dbPath,
+          home,
+          host: '127.0.0.1',
+          port: server.port,
+          readinessIntervalMs: 1,
+          readinessTimeoutMs: 50,
+        }),
+      ).rejects.toThrow(
+        /already has a Handoff server, but this version cannot verify its database/,
+      );
+      expect(readServerMetadata(home)).toBeUndefined();
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+      await killChildAndWait(server.child);
+    }
+  });
+
+  test('local server startup refuses to multiply a different Handoff database', async () => {
+    const home = tempHome();
+    const dbPath = join(home, 'data', 'default', 'relay.db');
+    const otherDbPath = join(home, 'data', 'other', 'relay.db');
+    mkdirSync(join(home, 'data', 'default'), { recursive: true });
+    mkdirSync(join(home, 'data', 'other'), { recursive: true });
+    const server = await spawnFakeHandoffServer('srv_different_database_test', {
+      databaseId: databaseIdForPath(otherDbPath),
+    });
+    const fakeCliPath = join(home, 'should-not-start.js');
+    writeFileSync(fakeCliPath, 'process.exit(42);\n');
+    const previousCliPath = process.env.HANDOFF_CLI_PATH;
+    try {
+      process.env.HANDOFF_CLI_PATH = fakeCliPath;
+
+      await expect(
+        ensureLocalServer({
+          dbPath,
+          home,
+          host: '127.0.0.1',
+          port: server.port,
+          readinessIntervalMs: 1,
+          readinessTimeoutMs: 50,
+        }),
+      ).rejects.toThrow(/already has a Handoff server for a different local database/);
+      expect(readServerMetadata(home)).toBeUndefined();
+    } finally {
+      if (previousCliPath === undefined) {
+        delete process.env.HANDOFF_CLI_PATH;
+      } else {
+        process.env.HANDOFF_CLI_PATH = previousCliPath;
+      }
+      await killChildAndWait(server.child);
     }
   });
 

@@ -6,6 +6,8 @@ import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { databaseIdForPath } from '../storage/database-id.js';
+
 export interface EnsureServerInput {
   dbPath: string;
   host: string;
@@ -64,6 +66,8 @@ export interface RecordedServerInspection {
 }
 
 interface HandoffHealth {
+  bind_host?: string;
+  database_id?: string;
   name?: string;
   ok?: boolean;
   pid?: number;
@@ -105,12 +109,13 @@ export async function findAvailablePort(input: {
 
 export async function probeHandoffServer(
   serverUrl: string,
-  input: { expectedServerId?: string; timeoutMs?: number } = {},
+  input: { expectedDatabaseId?: string; expectedServerId?: string; timeoutMs?: number } = {},
 ): Promise<boolean> {
   try {
     const body = await readHandoffHealth(serverUrl, input);
     return (
       body.name === 'handoff' &&
+      (!input.expectedDatabaseId || body.database_id === input.expectedDatabaseId) &&
       (!input.expectedServerId || body.server_id === input.expectedServerId)
     );
   } catch {
@@ -122,6 +127,7 @@ export async function waitForHandoffServer(
   serverUrl: string,
   input: {
     expectedServerId?: string;
+    expectedDatabaseId?: string;
     intervalMs?: number;
     probeTimeoutMs?: number;
     timeoutMs?: number;
@@ -136,6 +142,7 @@ export async function waitForHandoffServer(
     if (
       await probeHandoffServer(serverUrl, {
         expectedServerId: input.expectedServerId,
+        expectedDatabaseId: input.expectedDatabaseId,
         timeoutMs: probeTimeoutMs,
       })
     ) {
@@ -153,10 +160,14 @@ export function createDefaultServerLifecycle(): ServerLifecycle {
 }
 
 export async function ensureLocalServer(input: EnsureServerInput): Promise<EnsureServerResult> {
+  const expectedDatabaseId = databaseIdForPath(input.dbPath);
   if (
     input.serverUrl &&
     input.serverUrl !== 'local-db' &&
-    (await probeHandoffServer(input.serverUrl, { timeoutMs: 1_000 })) &&
+    (await probeHandoffServer(input.serverUrl, {
+      expectedDatabaseId,
+      timeoutMs: 1_000,
+    })) &&
     canReuseHealthyServer(input)
   ) {
     return {
@@ -167,6 +178,11 @@ export async function ensureLocalServer(input: EnsureServerInput): Promise<Ensur
   }
   if (process.env.HANDOFF_TEST_SKIP_SERVER === '1') {
     return { status: 'skipped', serverUrl: 'local-db' };
+  }
+
+  const preferredServer = await inspectPreferredPortHandoffServer(input, expectedDatabaseId);
+  if (preferredServer) {
+    return preferredServer;
   }
 
   const port = await findAvailablePort({ host: input.host, preferredPort: input.port });
@@ -198,6 +214,7 @@ export async function ensureLocalServer(input: EnsureServerInput): Promise<Ensur
   closeSync(out);
 
   const ready = await waitForHandoffServer(serverUrl, {
+    expectedDatabaseId,
     expectedServerId: serverId,
     intervalMs: input.readinessIntervalMs,
     timeoutMs: input.readinessTimeoutMs,
@@ -226,6 +243,57 @@ export async function ensureLocalServer(input: EnsureServerInput): Promise<Ensur
     serverUrl,
     port,
     pid: child.pid,
+    logPath,
+  };
+}
+
+async function inspectPreferredPortHandoffServer(
+  input: EnsureServerInput,
+  expectedDatabaseId: string,
+): Promise<EnsureServerResult | undefined> {
+  const serverUrl = loopbackServerUrl(input.host, input.port);
+  let health: HandoffHealth;
+  try {
+    health = await readHandoffHealth(serverUrl, { timeoutMs: 1_000 });
+  } catch {
+    return undefined;
+  }
+  if (health.name !== 'handoff') {
+    return undefined;
+  }
+  if (!health.database_id) {
+    throw new Error(
+      `Port ${input.port} already has a Handoff server, but this version cannot verify its database. Run \`npx -y handoff-relay server stop\`, restart stale Handoff processes, or pass --port <free-port>.`,
+    );
+  }
+  if (health.database_id !== expectedDatabaseId) {
+    throw new Error(
+      `Port ${input.port} already has a Handoff server for a different local database. Use --port <free-port> or stop the other Handoff server first.`,
+    );
+  }
+  if (!canReuseHealthyServerAtUrl(input, serverUrl, health.bind_host)) {
+    throw new Error(
+      `Port ${input.port} already has a matching Handoff server, but it is not LAN-reachable. Stop it first or pass --port <free-port>.`,
+    );
+  }
+
+  const logPath = join(input.home, 'logs', `server-${input.port}.log`);
+  writeServerMetadata(input.home, {
+    pid: health.pid,
+    dbPath: input.dbPath,
+    host: health.bind_host ?? input.host,
+    port: input.port,
+    serverId: health.server_id,
+    serverUrl,
+    logPath,
+    startedAt: new Date().toISOString(),
+  });
+  return {
+    bindHost: health.bind_host ?? input.host,
+    status: 'reused',
+    serverUrl,
+    port: input.port,
+    pid: health.pid,
     logPath,
   };
 }
@@ -330,10 +398,19 @@ async function inspectRecordedServerIdentity(
 }
 
 function canReuseHealthyServer(input: EnsureServerInput): boolean {
+  return canReuseHealthyServerAtUrl(input, input.serverUrl, readServerMetadata(input.home)?.host);
+}
+
+function canReuseHealthyServerAtUrl(
+  input: EnsureServerInput,
+  serverUrl: string | undefined,
+  bindHost: string | undefined,
+): boolean {
   if (!requiresLanBind(input.host)) return true;
+  if (bindHost && !isLoopbackHost(bindHost)) return true;
   const metadata = readServerMetadata(input.home);
   if (metadata?.host && isLoopbackHost(metadata.host)) return false;
-  if (isLoopbackUrl(input.serverUrl)) return false;
+  if (isLoopbackUrl(serverUrl)) return false;
   return true;
 }
 
@@ -414,6 +491,10 @@ function candidatePort(preferredPort: number, offset: number): number {
   if (port <= maxPort) return port;
   const fallbackRange = maxPort - minFallbackPort + 1;
   return minFallbackPort + ((port - maxPort - 1) % fallbackRange);
+}
+
+function loopbackServerUrl(host: string, port: number): string {
+  return `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`;
 }
 
 function isPrivateIpv4(address: string): boolean {

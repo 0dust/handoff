@@ -31,8 +31,11 @@ import {
 import { runtimeVersion } from '../runtime/version.js';
 import { RelayService } from '../service/relay-service.js';
 import { createRelayDatabase } from '../storage/database.js';
+import { databaseIdForPath } from '../storage/database-id.js';
 
 export interface ApiServerOptions {
+  bindHost?: string;
+  databaseId?: string;
   service: RelayService;
 }
 
@@ -108,6 +111,8 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   app.get('/health', async () => ({
     name: 'handoff',
     ok: true,
+    bind_host: options.bindHost,
+    database_id: options.databaseId,
     pid: process.pid,
     server_id: process.env.HANDOFF_SERVER_ID,
     version: runtimeVersion,
@@ -683,7 +688,12 @@ export async function startApiServer(input: {
   port?: number;
 }): Promise<FastifyInstance> {
   const service = new RelayService(createRelayDatabase(input.dbPath));
-  const app = buildApiServer({ service });
-  await app.listen({ host: input.host ?? '127.0.0.1', port: input.port ?? 3737 });
+  const host = input.host ?? '127.0.0.1';
+  const app = buildApiServer({
+    service,
+    bindHost: host,
+    databaseId: databaseIdForPath(input.dbPath),
+  });
+  await app.listen({ host, port: input.port ?? 3737 });
   return app;
 }

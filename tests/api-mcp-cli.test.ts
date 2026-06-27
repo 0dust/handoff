@@ -21,6 +21,7 @@ import { createNotificationDispatcher, createPollingWatcher } from '../src/notif
 import { RelayService } from '../src/service/relay-service.js';
 import { createProfileStore } from '../src/setup/profile.js';
 import { createRelayDatabase } from '../src/storage/database.js';
+import { databaseIdForPath } from '../src/storage/database-id.js';
 
 function createService() {
   const dir = mkdtempSync(join(tmpdir(), 'agent-relay-api-'));
@@ -86,8 +87,8 @@ async function startWebhookServer() {
 describe('coordination API', () => {
   test('runtime surfaces report the package version from a shared constant', async () => {
     const { runtimeVersion } = await import('../src/runtime/version.js');
-    const { service } = createService();
-    const app = buildApiServer({ service });
+    const { service, dbPath } = createService();
+    const app = buildApiServer({ service, databaseId: databaseIdForPath(dbPath) });
 
     const health = await app.inject({
       method: 'GET',
@@ -97,6 +98,7 @@ describe('coordination API', () => {
 
     expect(runtimeVersion).toBe(packageJson.version);
     expect(health.json().version).toBe(runtimeVersion);
+    expect(health.json().database_id).toBe(databaseIdForPath(dbPath));
     expect(cli.stdout.trim()).toBe(runtimeVersion);
   });
 
