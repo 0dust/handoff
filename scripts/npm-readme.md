@@ -1,38 +1,66 @@
-# handoff-relay
+<div align="center">
+  <p>
+    <img alt="Handoff wordmark showing a reviewed packet moving between two coding-agent panes" src="https://raw.githubusercontent.com/0dust/handoff/main/assets/readme/handoff-relay-packet-wordmark.svg" width="760">
+  </p>
 
-Human-approved context handoffs between coding agents.
+  <p><strong>Human-approved context packets for coding agents.</strong></p>
 
-Handoff lets Codex, Claude Code, Cursor, and other MCP-capable agents send bounded Relay Packets between teammates. An agent drafts the packet, a human reviews what leaves, the recipient reviews what arrives, and only then does their agent hydrate the selected context.
+  <p>Move only the selected context you approved from one teammate's coding agent to another.</p>
+</div>
 
-## Team Setup
+---
 
-On the host/admin machine, create a LAN-reachable workspace and first invite:
+Handoff is a local-first MCP relay for structured Relay Packets. A sending agent drafts context, the sender reviews and approves it, the recipient reviews it, and only then does the recipient's agent hydrate bounded context into its own session.
+
+It is not a chat room, passive team memory, or autonomous agent-to-agent channel.
+
+## Quick Start
+
+Host/admin:
 
 ```bash
 npx -y handoff-relay start --lan --install-mcp codex --invite alice
 ```
 
-Add more teammates later with `invite`:
-
-```bash
-npx -y handoff-relay invite bob
-```
-
-Rerunning `start --invite <handle>` or `invite <handle>` before that teammate joins reprints the same active invite.
-
-Each teammate runs their own join command:
-
-```bash
-npx -y handoff-relay join http://<handoff-host>:3737/invite/<invite-token> --install-mcp codex
-```
-
 Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
 
-`start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, MCP config when requested, and a background notification watcher. `join` stores the teammate's local profile and member credentials, then starts that teammate's local notification watcher. To opt out later, run `npx -y handoff-relay watch --stop`.
+Teammate:
+
+```bash
+npx -y handoff-relay join <invite-link> --install-mcp codex
+```
+
+Check the setup:
+
+```bash
+npx -y handoff-relay doctor
+```
+
+After that, use Handoff inside your coding agent:
+
+```text
+Use Handoff to package this investigation for @alice.
+Show me the Relay Packet and redaction report before sending.
+If I approve, call relay_send_approved.
+```
+
+```text
+Use Handoff to check my inbox.
+Show me the next Relay Packet before hydration.
+If I approve, call relay_hydrate_approved.
+```
+
+## What Handoff Protects
+
+| Handoff protects | How                                                               |
+| ---------------- | ----------------------------------------------------------------- |
+| Scope            | Agents send selected packet fields instead of raw transcripts.    |
+| Consent          | Sender approval before send, recipient approval before hydration. |
+| Trust            | Claims are linked to evidence and audit receipts.                 |
+| Secrets          | Redaction blocks secret-looking content by default.               |
+| Ownership        | Teams self-host with local profiles and SQLite by default.        |
 
 ## Use With Agents
-
-Handoff is meant to run behind your coding agent as a stdio MCP server. The normal workflow happens inside the agent, not by manually copying CLI output around.
 
 Profile-backed MCP command:
 
@@ -53,32 +81,6 @@ MCP JSON:
 }
 ```
 
-Ask the sending agent:
-
-```text
-Use Handoff to create a Relay Packet for @alice from this session.
-Include files touched, commands run, known failures, current hypothesis, evidence excerpts, and suggested next steps.
-Draft with relay_share or relay_ask. Show me the packet summary, claims, evidence, expiry, and redaction report before sending.
-If I approve, call relay_send_approved.
-```
-
-Ask the receiving agent:
-
-```text
-Check my Handoff inbox.
-Call relay_review_next and show me the Relay Packet before hydration.
-If I approve, call relay_hydrate_approved.
-```
-
-## Client Setup
-
-Codex can be wired automatically while hosting or joining:
-
-```bash
-npx -y handoff-relay start --lan --install-mcp codex --invite alice
-npx -y handoff-relay join <invite-link> --install-mcp codex
-```
-
 Codex TOML:
 
 ```toml
@@ -90,96 +92,44 @@ tool_timeout_sec = 60
 enabled = true
 ```
 
-Claude Code can be wired automatically while hosting or joining:
+Profile mode reads the active local Handoff profile. Agents do not need member tokens, workspace IDs, database paths, server URLs, or approval secrets in prompts or MCP schemas.
 
-```bash
-npx -y handoff-relay start --lan --install-mcp claude --invite alice
-npx -y handoff-relay join <invite-link> --install-mcp claude
-```
+## Main MCP Tools
 
-Cursor can be wired automatically while hosting or joining:
+| Workflow | Tools                                                                          |
+| -------- | ------------------------------------------------------------------------------ |
+| Send     | `relay_share`, `relay_ask`, `relay_update_draft`, `relay_send_approved`        |
+| Receive  | `relay_review_next`, `relay_hydrate_approved`, `relay_inbox`, `relay_review`   |
+| Fallback | `relay_status`, `relay_view`, `relay_accept`, `relay_hydrate`, `relay_approve` |
+| Reply    | `relay_reply`, `relay_send_approved`                                           |
+| Triage   | `relay_clarify`, `relay_decline`, `relay_archive`                              |
+| Search   | `relay_search`, `relay_history`, `relay_audit`                                 |
+| Admin    | `relay_configure_project_alias`, `relay_project_aliases`                       |
 
-```bash
-npx -y handoff-relay start --lan --install-mcp cursor --invite alice
-npx -y handoff-relay join <invite-link> --install-mcp cursor
-```
+## Approval Flow
 
-Claude Desktop, Claude Code project config, Cursor, and other `mcpServers` clients can use the JSON config above.
-
-## Human Approval
-
-Strict approval is the default. Agents can draft, list, and read packets, but they need a human approval token before sending, hydrating, or approving a reply:
+Strict mode is the default:
 
 ```bash
 npx -y handoff-relay approval-token <packet-id> --action send
 npx -y handoff-relay approval-token <packet-id> --action hydrate
-npx -y handoff-relay approval-token <reply-packet-id> --action reply
 ```
 
-For local profile-backed sessions, you can opt into agent-confirmed approvals:
+Optional agent-confirmed approvals are available for profile-backed MCP sessions:
 
 ```bash
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-With that flag, the MCP process requests the short-lived approval token through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
+In that mode, the MCP process requests the same short-lived approval token through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Approval secrets stay out of MCP schemas and config.
 
-## Optional CLI Install
-
-You do not need a global install for MCP configs. `npx -y handoff-relay ...` is usually better because the MCP client can launch Handoff directly.
-
-Install globally only if you want shorter local commands:
+## Demo
 
 ```bash
-npm install -g handoff-relay
-handoff doctor
+npx -y handoff-relay demo two-user --json
 ```
 
-`handoff-relay` is the npm package name. `handoff` is the installed CLI command.
-
-Requires Node.js 20+.
-
-## CLI Commands
-
-```bash
-handoff start [--lan] [--install-mcp codex|claude|cursor]
-handoff invite <handle>
-handoff join <invite-link> [--install-mcp codex|claude|cursor]
-handoff leave
-handoff remove-member <handle-or-id>
-handoff doctor
-handoff server mcp --profile default
-handoff approval-token <packet-id> --action send|hydrate|reply
-handoff inbox
-handoff status <packet-id>
-handoff history
-handoff audit
-handoff watch --status
-handoff watch --stop
-handoff watch --background
-handoff demo two-user
-```
-
-## MCP Tools
-
-| Tool                     | Purpose                                                  |
-| ------------------------ | -------------------------------------------------------- |
-| `relay_ask`              | Draft an ask packet for another teammate.                |
-| `relay_share`            | Draft a share packet from current context.               |
-| `relay_update_draft`     | Edit a draft before approval.                            |
-| `relay_send_approved`    | Approve and send an ask, share, or reply packet.         |
-| `relay_review_next`      | Open the next actionable inbox packet for review.        |
-| `relay_inbox`            | List packets addressed to the current member.            |
-| `relay_review`           | Mark a chosen packet reviewed and return next actions.   |
-| `relay_hydrate_approved` | Hydrate a reviewed packet after human approval.          |
-| `relay_approve`          | Compatibility approval tool.                             |
-| `relay_reply`            | Draft a reply packet.                                    |
-| `relay_clarify`          | Request more information or evidence.                    |
-| `relay_decline`          | Decline an addressed packet.                             |
-| `relay_archive`          | Archive a readable packet.                               |
-| `relay_search`           | Search permitted packet history without hydration.       |
-| `relay_history`          | List drafts, sent packets, open work, or closed packets. |
-| `relay_audit`            | List packet audit receipts.                              |
+The demo exercises ask, share, reply, review, hydration, archive, and audit receipts in one local SQLite-backed flow.
 
 ## Links
 
@@ -187,5 +137,7 @@ handoff demo two-user
 - Codex setup: https://github.com/0dust/handoff/blob/main/docs/codex-setup.md
 - Claude Code setup: https://github.com/0dust/handoff/blob/main/docs/claude-code-setup.md
 - Generic MCP setup: https://github.com/0dust/handoff/blob/main/docs/generic-mcp-setup.md
+- Security model: https://github.com/0dust/handoff/blob/main/docs/security-privacy.md
+- Product Hunt launch kit: https://github.com/0dust/handoff/blob/main/docs/product-hunt-launch-kit.md
 - Troubleshooting: https://github.com/0dust/handoff/blob/main/docs/troubleshooting.md
 - License: MIT

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 300" role="img" aria-labelledby="title desc">
+  <title id="title">Handoff relay packet wordmark</title>
+  <desc id="desc">A Handoff wordmark with a reviewed packet moving between two coding-agent panes.</desc>
+  <defs>
+    <linearGradient id="packetGlow" x1="318" x2="722" y1="86" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2f8f88" stop-opacity="0.2"/>
+      <stop offset="0.5" stop-color="#d99a2b" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#2f8f88" stop-opacity="0.2"/>
+    </linearGradient>
+    <linearGradient id="packetFace" x1="442" x2="598" y1="54" y2="146" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff6dc"/>
+      <stop offset="1" stop-color="#f2c76c"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#171412" flood-opacity="0.14"/>
+    </filter>
+    <style>
+      .ink { fill: #2f8f88; }
+      .muted { fill: #8a8277; }
+      .pane { fill: #242827; }
+      .pane-stroke { stroke: #78726a; }
+      .code { stroke: #8ed9d0; }
+      .code-muted { stroke: #747873; }
+      .teal { stroke: #2f8f88; }
+      .teal-fill { fill: #2f8f88; }
+      .amber { fill: #d99a2b; }
+      @media (prefers-color-scheme: dark) {
+        .ink { fill: #8ed9d0; }
+        .muted { fill: #c8c1b8; }
+        .pane { fill: #1d211f; }
+        .pane-stroke { stroke: #a49a8c; }
+        .code-muted { stroke: #8e918b; }
+      }
+    </style>
+  </defs>
+
+  <g filter="url(#softShadow)">
+    <rect x="146" y="56" width="184" height="104" rx="8" class="pane pane-stroke" stroke-width="4"/>
+    <circle cx="176" cy="86" r="12" class="teal-fill"/>
+    <path d="M204 90H284M204 116H258M204 138H300" class="code" stroke-width="8" stroke-linecap="round"/>
+    <path d="M284 116H304M258 138H282" class="code-muted" stroke-width="8" stroke-linecap="round"/>
+
+    <rect x="710" y="56" width="184" height="104" rx="8" class="pane pane-stroke" stroke-width="4"/>
+    <circle cx="740" cy="86" r="12" class="teal-fill"/>
+    <path d="M768 90H848M768 116H822M768 138H864" class="code" stroke-width="8" stroke-linecap="round"/>
+    <path d="M848 116H868M822 138H846" class="code-muted" stroke-width="8" stroke-linecap="round"/>
+  </g>
+
+  <path d="M330 108C398 108 394 84 450 84" stroke="url(#packetGlow)" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <path d="M590 84C646 84 642 108 710 108" stroke="url(#packetGlow)" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <path d="M360 108H396M644 108H680" class="teal" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 14"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="440" y="50" width="160" height="112" rx="8" fill="url(#packetFace)" stroke="#ad7c24" stroke-width="3"/>
+    <path d="M444 62L520 118L596 62" fill="none" stroke="#ad7c24" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="520" cy="106" r="24" fill="#ffffff" opacity="0.88"/>
+    <path d="M508 106L517 116L535 94" fill="none" stroke="#2f8f88" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="520" y="238" text-anchor="middle" class="ink" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="82" font-weight="780" letter-spacing="0">Handoff</text>
+  <text x="520" y="270" text-anchor="middle" class="muted" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="600" letter-spacing="0">human-approved context packets between coding agents</text>
+</svg>
