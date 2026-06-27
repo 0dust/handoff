@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, type OutputConfiguration } from 'commander';
 
 import { confirmLocalApproval } from './approval.js';
-import { RelayApiClient } from './api/client.js';
 import { registerDemoCommands } from './cli/demo-commands.js';
 import { registerServerCommands } from './cli/server-commands.js';
 import { registerSetupCommands, type SetupCommandOptions } from './cli/setup-commands.js';
@@ -511,20 +510,12 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
       process.env.HANDOFF_MEMBER_TOKEN ??
       process.env.AGENT_RELAY_TOKEN ??
       profileContext?.credentials.memberToken;
-    const result =
-      service instanceof RelayApiClient
-        ? await service.createApprovalToken({
-            authToken: authToken ?? '',
-            approvalSecret,
-            packetId,
-            action: options.action,
-          })
-        : await service.createApprovalToken({
-            authToken: authToken ?? '',
-            approvalSecret,
-            packetId,
-            action: options.action,
-          });
+    const result = await service.createApprovalToken({
+      authToken: authToken ?? '',
+      approvalSecret,
+      packetId,
+      action: options.action,
+    });
     closeBackend(service);
     write(io, result, options.json);
   });
