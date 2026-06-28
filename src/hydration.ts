@@ -23,8 +23,9 @@ function isStale(packet: RelayPacket): boolean {
 }
 
 function mainText(packet: RelayPacket): string {
-  if (packet.packet_type === 'ask') return packet.question ?? '';
-  if (packet.packet_type === 'share') return packet.finding ?? '';
+  const clarificationAnswer = packet.answer ? `\n\nClarification answer:\n${packet.answer}` : '';
+  if (packet.packet_type === 'ask') return `${packet.question ?? ''}${clarificationAnswer}`;
+  if (packet.packet_type === 'share') return `${packet.finding ?? ''}${clarificationAnswer}`;
   if (packet.packet_type === 'reply') return packet.answer ?? '';
   return packet.question ?? '';
 }

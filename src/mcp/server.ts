@@ -65,11 +65,22 @@ function isStructuredObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function withRecipientReviewGuidance<T extends object>(
+function withReviewGuidance<T extends { packet: RelayPacket }>(
   result: T,
 ): T & {
   next_actions: string[];
 } {
+  if (result.packet.packet_type === 'clarification') {
+    return {
+      ...result,
+      next_actions: [
+        'Show this clarification request to the human.',
+        'If the human can answer, call relay_answer_clarification with this clarification packetId.',
+        'Show the returned original packet and redaction_report to the human.',
+        'If approved, call relay_send_approved for the returned original packetId.',
+      ],
+    };
+  }
   return {
     ...result,
     next_actions: [
@@ -267,7 +278,7 @@ export function getMcpToolDefinitions(
           };
         }
         return {
-          ...withRecipientReviewGuidance(
+          ...withReviewGuidance(
             await service.viewPacket({
               authToken: args.authToken,
               packetId: packet.packet_id,
@@ -338,7 +349,7 @@ export function getMcpToolDefinitions(
         packetId: z.string(),
       },
       handler: async (args) => {
-        return withRecipientReviewGuidance(await service.viewPacket(args));
+        return withReviewGuidance(await service.viewPacket(args));
       },
     },
     {
@@ -408,6 +419,40 @@ export function getMcpToolDefinitions(
         requestedEvidence: z.array(z.string()).optional(),
       },
       handler: async (args) => service.requestClarification(args),
+    },
+    {
+      name: 'relay_answer_clarification',
+      description:
+        'Answer a clarification request addressed to the sender and return the original packet to sender approval.',
+      inputSchema: {
+        authToken: z.string(),
+        packetId: z.string().describe('Clarification packet id'),
+        answer: z.string(),
+        title: z.string().optional(),
+        summary: z.string().optional(),
+        question: z.string().optional(),
+        finding: z.string().optional(),
+        claims: claimInput,
+        evidence: evidenceInput,
+        filesOrSymbols: z.array(z.string()).optional(),
+        commandsOrTestsRun: z.array(z.string()).optional(),
+        whatWasTried: z.array(z.string()).optional(),
+        knownFailures: z.array(z.string()).optional(),
+        currentHypothesis: z.string().optional(),
+        confidence,
+        suggestedNextSteps: z.array(z.string()).optional(),
+      },
+      handler: async (args) => {
+        const result = await service.answerClarification(args);
+        return {
+          ...result,
+          next_actions: [
+            'Show this updated original packet and redaction_report to the human.',
+            'If approved, call relay_send_approved with this packetId.',
+            'If redaction_report.blocked is true, remove or override blocked content through the existing sender approval flow.',
+          ],
+        };
+      },
     },
     {
       name: 'relay_decline',

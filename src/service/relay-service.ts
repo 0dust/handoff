@@ -200,6 +200,26 @@ export interface UpdateDraftInput {
   suggestedNextSteps?: string[];
 }
 
+export interface AnswerClarificationInput {
+  authToken: string;
+  packetId?: string;
+  clarificationPacketId?: string;
+  answer: string;
+  title?: string;
+  summary?: string;
+  question?: string;
+  finding?: string;
+  claims?: BuildPacketDraftInput['claims'];
+  evidence?: Partial<RelayEvidence>[];
+  filesOrSymbols?: string[];
+  commandsOrTestsRun?: string[];
+  whatWasTried?: string[];
+  knownFailures?: string[];
+  currentHypothesis?: string;
+  confidence?: RelayPacket['confidence'];
+  suggestedNextSteps?: string[];
+}
+
 export interface PacketResult {
   id: string;
   packet: RelayPacket;
@@ -991,29 +1011,9 @@ export class RelayService {
     notification: NotificationRecord;
   } {
     const member = this.authenticate(input.authToken);
-    const row = this.db
-      .prepare(
-        `SELECT
-          notifications.id,
-          notifications.packet_id,
-          notifications.workspace_id,
-          notifications.member_id,
-          notifications.status,
-          notifications.created_at,
-          notifications.read_at,
-          packets.packet_type,
-          packets.title,
-          packets.summary,
-          packets.project,
-          members.handle AS sender_handle
-        FROM notifications
-        JOIN packets ON packets.id = notifications.packet_id
-        JOIN members ON members.id = packets.sender_member_id
-        WHERE notifications.id = ?`,
-      )
-      .get(input.notificationId) as NotificationSummaryRow | undefined;
+    const row = this.getNotificationSummaryById(input.notificationId);
     if (!row) {
-      throw relayError('NOT_FOUND', 'Notification not found.', 404);
+      return { notification: this.ackSupersededNotification(member, input.notificationId) };
     }
     if (row.member_id !== member.id) {
       throw relayError('FORBIDDEN', 'Notification belongs to a different member.', 403);
@@ -1351,6 +1351,92 @@ export class RelayService {
       return packet;
     });
     const packet = clarify();
+    return { id: packet.packet_id, packet };
+  }
+
+  answerClarification(input: AnswerClarificationInput): PacketResult {
+    const actor = this.authenticate(input.authToken);
+    if (!input.answer.trim()) {
+      throw relayError('INVALID_INPUT', 'Clarification answers require answer text.', 400);
+    }
+    const clarificationPacketId = input.clarificationPacketId ?? input.packetId;
+    if (!clarificationPacketId) {
+      throw relayError('INVALID_INPUT', 'Clarification packet id is required.', 400);
+    }
+    let clarification = this.getPacket(clarificationPacketId);
+    if (clarification.packet_type !== 'clarification') {
+      throw relayError('INVALID_INPUT', 'Packet is not a clarification request.', 400);
+    }
+    this.requireRecipient(actor, clarification);
+    if (!['delivered', 'viewed'].includes(clarification.status)) {
+      throw relayError(
+        'INVALID_STATE_TRANSITION',
+        'Only open clarification requests can be answered.',
+        409,
+      );
+    }
+    if (!clarification.parent_packet_id) {
+      throw relayError('INVALID_INPUT', 'Clarification request is missing a parent packet.', 400);
+    }
+    let parent = this.getPacket(clarification.parent_packet_id);
+    this.requireSender(actor, parent);
+    if (!['ask', 'share'].includes(parent.packet_type)) {
+      throw relayError('INVALID_INPUT', 'Clarifications can only resume ask/share packets.', 400);
+    }
+    if (parent.status !== 'clarification_requested') {
+      throw relayError(
+        'INVALID_STATE_TRANSITION',
+        'Only packets waiting on clarification can be answered.',
+        409,
+      );
+    }
+
+    const changedFields = Object.entries(input)
+      .filter(
+        ([key, value]) =>
+          !['authToken', 'packetId', 'clarificationPacketId'].includes(key) && value !== undefined,
+      )
+      .map(([key]) => key);
+    const answer = this.db.transaction(() => {
+      parent = this.preparePacket(
+        packetSchema.parse({
+          ...parent,
+          title: input.title ?? parent.title,
+          summary: input.summary ?? input.answer,
+          question: input.question ?? parent.question,
+          finding: input.finding ?? parent.finding,
+          answer: input.answer,
+          claims: input.claims?.map(normalizeClaim) ?? parent.claims,
+          evidence: input.evidence?.map(normalizeEvidence) ?? parent.evidence,
+          files_or_symbols: input.filesOrSymbols ?? parent.files_or_symbols,
+          commands_or_tests_run: input.commandsOrTestsRun ?? parent.commands_or_tests_run,
+          what_was_tried: input.whatWasTried ?? parent.what_was_tried,
+          known_failures: input.knownFailures ?? parent.known_failures,
+          current_hypothesis: input.currentHypothesis ?? parent.current_hypothesis,
+          confidence: input.confidence ?? parent.confidence,
+          suggested_next_steps: input.suggestedNextSteps ?? parent.suggested_next_steps,
+          updated_at: new Date().toISOString(),
+        }),
+      );
+      parent = this.updatePacket(parent);
+      clarification = this.transitionPacket(clarification, 'archived', actor, 'recipient');
+      this.markNotificationRead(clarification.packet_id, actor.id);
+      parent = this.transitionPacket(parent, 'pending_sender_approval', actor, 'sender');
+      this.recordAudit({
+        action: 'answer_clarification',
+        actorMemberId: actor.id,
+        packetId: parent.packet_id,
+        workspaceId: parent.workspace_id,
+        metadata: {
+          clarification_packet_id: clarification.packet_id,
+          changed_fields: changedFields,
+        },
+      });
+      parent = this.getPacket(parent.packet_id);
+      this.recordA2aPacketTransport(parent, { refreshPacketHash: true });
+      return parent;
+    });
+    const packet = answer();
     return { id: packet.packet_id, packet };
   }
 
@@ -1966,19 +2052,41 @@ export class RelayService {
   }
 
   private createNotification(packet: RelayPacket, memberId: string): void {
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO notifications (id, packet_id, workspace_id, member_id, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        createId('ntf'),
-        packet.packet_id,
-        packet.workspace_id,
-        memberId,
-        'unread',
-        new Date().toISOString(),
-      );
+    const existing = this.db
+      .prepare('SELECT id FROM notifications WHERE packet_id = ? AND member_id = ?')
+      .get(packet.packet_id, memberId) as { id: string } | undefined;
+    const now = new Date().toISOString();
+    const notificationId = createId('ntf');
+    const save = this.db.transaction(() => {
+      if (existing) {
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO notification_delivery_aliases
+              (superseded_id, packet_id, workspace_id, member_id, superseded_at)
+            VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(existing.id, packet.packet_id, packet.workspace_id, memberId, now);
+        this.db
+          .prepare(
+            `UPDATE notifications
+            SET id = ?,
+                status = 'unread',
+                created_at = ?,
+                read_at = NULL
+            WHERE packet_id = ?
+              AND member_id = ?`,
+          )
+          .run(notificationId, now, packet.packet_id, memberId);
+        return;
+      }
+      this.db
+        .prepare(
+          `INSERT INTO notifications (id, packet_id, workspace_id, member_id, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(notificationId, packet.packet_id, packet.workspace_id, memberId, 'unread', now);
+    });
+    save();
   }
 
   private markNotificationRead(packetId: string, memberId: string): void {
@@ -1994,10 +2102,73 @@ export class RelayService {
       .run(new Date().toISOString(), packetId, memberId);
   }
 
+  private getNotificationSummaryById(notificationId: string): NotificationSummaryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT
+          notifications.id,
+          notifications.packet_id,
+          notifications.workspace_id,
+          notifications.member_id,
+          notifications.status,
+          notifications.created_at,
+          notifications.read_at,
+          packets.packet_type,
+          packets.title,
+          packets.summary,
+          packets.project,
+          members.handle AS sender_handle
+        FROM notifications
+        JOIN packets ON packets.id = notifications.packet_id
+        JOIN members ON members.id = packets.sender_member_id
+        WHERE notifications.id = ?`,
+      )
+      .get(notificationId) as NotificationSummaryRow | undefined;
+  }
+
+  private ackSupersededNotification(
+    member: MemberRecord,
+    notificationId: string,
+  ): NotificationRecord {
+    const row = this.db
+      .prepare(
+        `SELECT
+          notifications.id,
+          notifications.packet_id,
+          notifications.workspace_id,
+          notifications.member_id,
+          notifications.status,
+          notifications.created_at,
+          notifications.read_at,
+          packets.packet_type,
+          packets.title,
+          packets.summary,
+          packets.project,
+          members.handle AS sender_handle,
+          notification_delivery_aliases.member_id AS alias_member_id
+        FROM notification_delivery_aliases
+        JOIN notifications
+          ON notifications.packet_id = notification_delivery_aliases.packet_id
+         AND notifications.member_id = notification_delivery_aliases.member_id
+        JOIN packets ON packets.id = notifications.packet_id
+        JOIN members ON members.id = packets.sender_member_id
+        WHERE notification_delivery_aliases.superseded_id = ?`,
+      )
+      .get(notificationId) as (NotificationSummaryRow & { alias_member_id: string }) | undefined;
+    if (!row) {
+      throw relayError('NOT_FOUND', 'Notification not found.', 404);
+    }
+    if (row.alias_member_id !== member.id) {
+      throw relayError('FORBIDDEN', 'Notification belongs to a different member.', 403);
+    }
+    return rowToNotificationRecord(row);
+  }
+
   private recordA2aPacketTransport(
     packet: RelayPacket,
     input: {
       createIfMissing?: boolean;
+      refreshPacketHash?: boolean;
       timestamps?: Partial<
         Pick<TrustReceipt, 'sender_approved_at' | 'hydrated_at' | 'replied_at' | 'terminal_at'>
       >;
@@ -2007,7 +2178,8 @@ export class RelayService {
     if (!existing && !input.createIfMissing) {
       return undefined;
     }
-    const packetHash = existing?.packet_hash ?? canonicalPacketHash(packet);
+    const packetHash =
+      existing && !input.refreshPacketHash ? existing.packet_hash : canonicalPacketHash(packet);
     const receipt = buildTrustReceipt({
       packet,
       packetHash,
@@ -2024,6 +2196,7 @@ export class RelayService {
     return this.packetTransports.upsert({
       packet_id: packet.packet_id,
       workspace_id: packet.workspace_id,
+      allowPacketHashRefresh: input.refreshPacketHash,
       ...(existing ? { existing } : {}),
       protocol: INTERNAL_A2A_PROTOCOL,
       task_id: receipt.a2a_task_id,

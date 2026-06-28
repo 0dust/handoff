@@ -152,6 +152,7 @@ Explicit-auth mode exposes `authToken` and `workspaceId` in schemas. Do not put 
 - `relay_hydrate`: low-level hydration tool for accepted packets.
 - `relay_reply`: drafts a reply packet; returns `pending_recipient_approval`.
 - `relay_clarify`: requests more information or evidence from the sender after packet review.
+- `relay_answer_clarification`: answers a clarification request and returns the original packet to sender approval.
 - `relay_decline`: declines an addressed packet.
 - `relay_archive`: archives a readable packet.
 - `relay_search`: searches only permitted packet history and never hydrates results.

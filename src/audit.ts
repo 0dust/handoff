@@ -4,6 +4,7 @@ export type AuditAction =
   | 'accept'
   | 'approve'
   | 'archive'
+  | 'answer_clarification'
   | 'clarify'
   | 'close'
   | 'configure_project_alias'

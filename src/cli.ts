@@ -642,6 +642,50 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
     write(io, result, options.json);
   });
 
+  addCommonOptions(
+    program
+      .command('answer-clarification')
+      .description('Answer a clarification request and return the original packet to approval')
+      .argument('<packetId>', 'Clarification packet id')
+      .argument('<answer>', 'Clarification answer')
+      .option('--token <token>', 'Relay member token')
+      .option('--title <title>', 'Updated original packet title')
+      .option('--summary <summary>', 'Updated original packet summary; defaults to answer')
+      .option('--question <question>', 'Updated ask question')
+      .option('--finding <finding>', 'Updated share finding')
+      .option('--claims-json <json>', 'JSON array of claim objects')
+      .option('--evidence-json <json>', 'JSON array of evidence objects')
+      .option('--files <items>', 'Comma-separated files or symbols')
+      .option('--tests <items>', 'Comma-separated commands or tests run')
+      .option('--tried <items>', 'Comma-separated what-was-tried entries')
+      .option('--failures <items>', 'Comma-separated known failures')
+      .option('--hypothesis <text>', 'Current hypothesis')
+      .option('--confidence <level>', 'low, medium, or high')
+      .option('--next-steps <items>', 'Comma-separated suggested next steps'),
+  ).action(async (packetId: string, answer: string, options: CommonOptions & any) => {
+    const auth = createAuthContext(options, { requireWorkspace: false });
+    const result = await auth.backend.answerClarification({
+      authToken: auth.authToken,
+      packetId,
+      answer,
+      title: options.title,
+      summary: options.summary,
+      question: options.question,
+      finding: options.finding,
+      claims: parseJsonOption(options.claimsJson),
+      evidence: parseJsonOption(options.evidenceJson),
+      filesOrSymbols: parseListOption(options.files),
+      commandsOrTestsRun: parseListOption(options.tests),
+      whatWasTried: parseListOption(options.tried),
+      knownFailures: parseListOption(options.failures),
+      currentHypothesis: options.hypothesis,
+      confidence: options.confidence,
+      suggestedNextSteps: parseListOption(options.nextSteps),
+    });
+    closeBackend(auth.backend);
+    write(io, result, options.json);
+  });
+
   for (const commandName of ['decline', 'archive'] as const) {
     addCommonOptions(
       program

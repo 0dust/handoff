@@ -376,7 +376,7 @@ export function validateContextBudget(
 ): ContextBudgetResult {
   const budget = { ...defaultContextBudget, ...limits };
   const violations: string[] = [];
-  const mainText = packet.question ?? packet.finding ?? packet.answer ?? '';
+  const mainText = [packet.question ?? packet.finding, packet.answer].filter(Boolean).join('\n\n');
   const hydrationCharacters =
     packet.summary.length +
     mainText.length +

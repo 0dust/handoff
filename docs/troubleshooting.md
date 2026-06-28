@@ -161,6 +161,14 @@ Recipients can ask for clarification before hydration:
 npx -y handoff-relay clarify <packet-id> --db .relay/team.db --token <recipient-token> --question "Can you include the failing assertion?" --requested-evidence "test failure"
 ```
 
+The sender answers the delivered clarification packet, then approves the updated original packet through the normal send flow:
+
+```bash
+npx -y handoff-relay answer-clarification <clarification-packet-id> "The failing assertion is expected 200 received 401." --db .relay/team.db --token <sender-token> --tests "pnpm test auth-refresh"
+npx -y handoff-relay approval-token <original-packet-id> --db .relay/team.db --token <sender-token> --approval-secret <sender-approval-secret> --action send
+npx -y handoff-relay approve <original-packet-id> --db .relay/team.db --token <sender-token> --approval-token <approval-token>
+```
+
 ## Watcher Prints Nothing
 
 The watcher reads the durable notification queue and acknowledges a notification after it is delivered locally. Check `inbox` directly:
