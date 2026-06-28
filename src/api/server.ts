@@ -21,6 +21,7 @@ import {
 } from '../a2a/schema.js';
 import { isRelayError } from '../errors.js';
 import {
+  claimInputSchema,
   confidenceInputSchema,
   evidenceInputSchema,
   packetDraftInputShape,
@@ -596,6 +597,46 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
       packetId: params.packetId,
       question: body.question,
       requestedEvidence: body.requestedEvidence,
+    });
+  });
+
+  app.post('/packets/:packetId/answer-clarification', async (request) => {
+    const params = z.object({ packetId: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        answer: z.string(),
+        title: z.string().optional(),
+        summary: z.string().optional(),
+        question: z.string().optional(),
+        finding: z.string().optional(),
+        claims: claimInputSchema,
+        evidence: evidenceInputSchema,
+        filesOrSymbols: z.array(z.string()).optional(),
+        commandsOrTestsRun: z.array(z.string()).optional(),
+        whatWasTried: z.array(z.string()).optional(),
+        knownFailures: z.array(z.string()).optional(),
+        currentHypothesis: z.string().optional(),
+        confidence: confidenceInputSchema,
+        suggestedNextSteps: z.array(z.string()).optional(),
+      })
+      .parse(request.body);
+    return service.answerClarification({
+      authToken: bearer(request),
+      clarificationPacketId: params.packetId,
+      answer: body.answer,
+      title: body.title,
+      summary: body.summary,
+      question: body.question,
+      finding: body.finding,
+      claims: body.claims as any,
+      evidence: body.evidence as any,
+      filesOrSymbols: body.filesOrSymbols,
+      commandsOrTestsRun: body.commandsOrTestsRun,
+      whatWasTried: body.whatWasTried,
+      knownFailures: body.knownFailures,
+      currentHypothesis: body.currentHypothesis,
+      confidence: body.confidence,
+      suggestedNextSteps: body.suggestedNextSteps,
     });
   });
 

@@ -30,6 +30,7 @@ export interface PacketTransportRecord {
 
 export interface UpsertPacketTransportInput {
   existing?: PacketTransportRecord;
+  allowPacketHashRefresh?: boolean;
   packet_id: string;
   workspace_id: string;
   protocol?: PacketTransportProtocol;
@@ -120,7 +121,7 @@ export class PacketTransportRepository {
     const createdAt = existing?.created_at ?? now;
     const remoteEndpoint = validateRemoteEndpoint(input.remote_endpoint);
     const lastError = input.last_error ?? existing?.last_error;
-    if (existing && input.packet_hash !== existing.packet_hash) {
+    if (existing && input.packet_hash !== existing.packet_hash && !input.allowPacketHashRefresh) {
       throw new Error('Packet transport packet hash is immutable.');
     }
     if (input.trust_receipt.packet_hash !== input.packet_hash) {
@@ -140,6 +141,7 @@ export class PacketTransportRepository {
           task_id = excluded.task_id,
           artifact_id = excluded.artifact_id,
           trust_receipt_artifact_id = excluded.trust_receipt_artifact_id,
+          packet_hash = excluded.packet_hash,
           task_state = excluded.task_state,
           direction = excluded.direction,
           remote_endpoint = excluded.remote_endpoint,
@@ -147,9 +149,11 @@ export class PacketTransportRepository {
           last_error = excluded.last_error,
           updated_at = excluded.updated_at
         WHERE packet_transports.packet_hash = excluded.packet_hash
+          OR @allow_packet_hash_refresh = 1
         RETURNING *`,
       )
       .get({
+        allow_packet_hash_refresh: input.allowPacketHashRefresh ? 1 : 0,
         id,
         packet_id: input.packet_id,
         workspace_id: input.workspace_id,

@@ -239,6 +239,24 @@ export class RelayApiClient {
     });
   }
 
+  async answerClarification(
+    input: JsonObject & { authToken: string; packetId?: string; clarificationPacketId?: string },
+  ) {
+    const packetId = input.packetId ?? input.clarificationPacketId;
+    if (!packetId) {
+      throw new Error('Clarification packet id is required.');
+    }
+    const body: JsonObject = { ...input };
+    delete body.authToken;
+    delete body.packetId;
+    delete body.clarificationPacketId;
+    return this.request(`/packets/${packetId}/answer-clarification`, {
+      method: 'POST',
+      token: input.authToken,
+      body,
+    });
+  }
+
   async approveReply(input: { authToken: string; replyPacketId: string; approvalToken?: string }) {
     return this.approveAndSend({
       authToken: input.authToken,

@@ -1119,6 +1119,22 @@ describe('adapter parity and notifications', () => {
       requestedEvidence: ['test failure'],
     });
     expect(apiClarification.packet.packet_type).toBe('clarification');
+    const apiAnswered = await apiClient.answerClarification({
+      authToken: workspace.admin.token,
+      packetId: apiClarification.id,
+      answer: 'The failing assertion is expected 200 received 401.',
+      evidence: [
+        {
+          kind: 'test_failure',
+          label: 'Updated test output',
+          source: 'pnpm test auth-refresh',
+          excerpt: 'expected 200 received 401',
+        },
+      ],
+    });
+    expect(apiAnswered.id).toBe(draft.id);
+    expect(apiAnswered.packet.status).toBe('pending_sender_approval');
+    expect(apiAnswered.packet.summary).toBe('The failing assertion is expected 200 received 401.');
 
     const secondDraft = service.createAskDraft({
       authToken: workspace.admin.token,
@@ -1154,7 +1170,24 @@ describe('adapter parity and notifications', () => {
       'token payload,test failure',
       '--json',
     ]);
-    expect(JSON.parse(cliClarification.stdout).packet.packet_type).toBe('clarification');
+    const parsedCliClarification = JSON.parse(cliClarification.stdout);
+    expect(parsedCliClarification.packet.packet_type).toBe('clarification');
+    const cliAnswer = await runCli([
+      'answer-clarification',
+      parsedCliClarification.id,
+      'The token payload includes exp and sub.',
+      '--server-url',
+      serverUrl,
+      '--token',
+      workspace.admin.token,
+      '--tests',
+      'pnpm test auth-retry',
+      '--json',
+    ]);
+    const parsedCliAnswer = JSON.parse(cliAnswer.stdout);
+    expect(parsedCliAnswer.id).toBe(secondDraft.id);
+    expect(parsedCliAnswer.packet.status).toBe('pending_sender_approval');
+    expect(parsedCliAnswer.packet.commands_or_tests_run).toEqual(['pnpm test auth-retry']);
 
     const thirdDraft = service.createAskDraft({
       authToken: workspace.admin.token,
@@ -1187,6 +1220,21 @@ describe('adapter parity and notifications', () => {
       requestedEvidence: ['middleware log'],
     });
     expect(mcpClarification.packet.packet_type).toBe('clarification');
+    const answerClarificationTool = getMcpToolDefinitions(apiClient).find(
+      (tool) => tool.name === 'relay_answer_clarification',
+    );
+    const mcpAnswer = await answerClarificationTool?.handler({
+      authToken: workspace.admin.token,
+      packetId: mcpClarification.id,
+      answer: 'Middleware logs show the auth guard rejects before refresh.',
+      suggestedNextSteps: ['Recheck guard ordering'],
+    });
+    expect(mcpAnswer.id).toBe(thirdDraft.id);
+    expect(mcpAnswer.packet.status).toBe('pending_sender_approval');
+    expect(mcpAnswer.packet.suggested_next_steps).toEqual(['Recheck guard ordering']);
+    expect(mcpAnswer.next_actions).toContain(
+      'If approved, call relay_send_approved with this packetId.',
+    );
   });
 
   test('server-backed API client and CLI can rotate member tokens', async () => {

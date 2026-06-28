@@ -319,15 +319,15 @@ If you stopped notifications and want them back, run `npx -y handoff-relay watch
 
 Handoff MCP tools are grouped by workflow:
 
-| Workflow | Tools                                                                          |
-| -------- | ------------------------------------------------------------------------------ |
-| Send     | `relay_share`, `relay_ask`, `relay_update_draft`, `relay_send_approved`        |
-| Receive  | `relay_review_next`, `relay_hydrate_approved`, `relay_inbox`, `relay_review`   |
-| Fallback | `relay_status`, `relay_view`, `relay_accept`, `relay_hydrate`, `relay_approve` |
-| Reply    | `relay_reply`, `relay_send_approved`                                           |
-| Triage   | `relay_clarify`, `relay_decline`, `relay_archive`                              |
-| Search   | `relay_search`, `relay_history`, `relay_audit`                                 |
-| Admin    | `relay_configure_project_alias`, `relay_project_aliases`                       |
+| Workflow | Tools                                                                           |
+| -------- | ------------------------------------------------------------------------------- |
+| Send     | `relay_share`, `relay_ask`, `relay_update_draft`, `relay_send_approved`         |
+| Receive  | `relay_review_next`, `relay_hydrate_approved`, `relay_inbox`, `relay_review`    |
+| Fallback | `relay_status`, `relay_view`, `relay_accept`, `relay_hydrate`, `relay_approve`  |
+| Reply    | `relay_reply`, `relay_send_approved`                                            |
+| Triage   | `relay_clarify`, `relay_answer_clarification`, `relay_decline`, `relay_archive` |
+| Search   | `relay_search`, `relay_history`, `relay_audit`                                  |
+| Admin    | `relay_configure_project_alias`, `relay_project_aliases`                        |
 
 The fallback tools are still available for automation and compatibility. New agents should prefer the send and receive recipes above.
 
@@ -382,6 +382,7 @@ Full schema notes: [docs/packet-schema.md](docs/packet-schema.md).
 - Sender approval is required before ask/share packets leave the sender.
 - Recipient acceptance and approval are required before ask/share packets hydrate.
 - Reply approval is required before recipient-agent output returns to the sender.
+- Clarification answers return the original packet to sender approval; they do not send automatically.
 - Strict mode requires manual approval tokens; optional agent-confirmed mode lets profile-backed MCP request those tokens after explicit user instruction.
 - Approval secrets are not exposed through MCP schemas or config.
 - Member tokens and approval secrets are stored outside profile metadata.

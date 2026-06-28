@@ -788,6 +788,7 @@ describe('MCP tool contracts', () => {
         'relay_hydrate',
         'relay_reply',
         'relay_clarify',
+        'relay_answer_clarification',
         'relay_decline',
         'relay_archive',
         'relay_search',
@@ -1393,6 +1394,7 @@ describe('CLI and watcher', () => {
       'hydrate',
       'reply',
       'clarify',
+      'answer-clarification',
       'decline',
       'archive',
       'close',
@@ -1580,6 +1582,184 @@ describe('CLI and watcher', () => {
     expect(notifications).toEqual([
       '@sam is asking for help on Auth refresh in project-api. Review packet?',
     ]);
+  });
+
+  test('polling watcher emits clarified parent redeliveries after the first notification was acked', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Watch Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({
+      inviteToken: invite.invite.token,
+      displayName: 'Alice',
+    });
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Can you inspect the auth refresh test?',
+      title: 'Auth refresh',
+      summary: 'The integration test returns 401.',
+      sourceClient: 'codex',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: service.createApprovalToken({
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }).approval_token,
+    });
+
+    const deliveredNotificationIds: string[] = [];
+    const watcher = createPollingWatcher({
+      poll: () =>
+        service.listNotifications({
+          authToken: alice.member.token,
+          workspaceId: workspace.workspace.id,
+        }),
+      notify: (_message, summary) => {
+        deliveredNotificationIds.push(summary.notification_id ?? '');
+      },
+      ack: (summary) => {
+        if (!summary.notification_id) {
+          throw new Error('Expected notification id.');
+        }
+        service.ackNotification({
+          authToken: alice.member.token,
+          notificationId: summary.notification_id,
+        });
+      },
+    });
+
+    await watcher.tick();
+    await watcher.tick();
+    service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+    const clarification = service.requestClarification({
+      authToken: alice.member.token,
+      packetId: draft.id,
+      question: 'Can you include the failing assertion?',
+      requestedEvidence: ['test failure'],
+    });
+    service.answerClarification({
+      authToken: workspace.admin.token,
+      clarificationPacketId: clarification.id,
+      answer: 'The failing assertion is expected 200 received 401.',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: service.createApprovalToken({
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }).approval_token,
+    });
+    await watcher.tick();
+    watcher.stop();
+
+    expect(deliveredNotificationIds).toHaveLength(2);
+    expect(deliveredNotificationIds[1]).not.toBe(deliveredNotificationIds[0]);
+  });
+
+  test('polling watcher tolerates stale acks when clarification redelivery rotates the notification id', async () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Watch Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({
+      inviteToken: invite.invite.token,
+      displayName: 'Alice',
+    });
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Can you inspect the auth refresh test?',
+      title: 'Auth refresh',
+      summary: 'The integration test returns 401.',
+      sourceClient: 'codex',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: service.createApprovalToken({
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }).approval_token,
+    });
+
+    const deliveredNotificationIds: string[] = [];
+    const watcher = createPollingWatcher({
+      poll: () =>
+        service.listNotifications({
+          authToken: alice.member.token,
+          workspaceId: workspace.workspace.id,
+        }),
+      notify: (_message, summary) => {
+        deliveredNotificationIds.push(summary.notification_id ?? '');
+        if (deliveredNotificationIds.length !== 1) {
+          return;
+        }
+        service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+        const clarification = service.requestClarification({
+          authToken: alice.member.token,
+          packetId: draft.id,
+          question: 'Can you include the failing assertion?',
+          requestedEvidence: ['test failure'],
+        });
+        service.answerClarification({
+          authToken: workspace.admin.token,
+          clarificationPacketId: clarification.id,
+          answer: 'The failing assertion is expected 200 received 401.',
+        });
+        service.approveAndSend({
+          authToken: workspace.admin.token,
+          packetId: draft.id,
+          approvalToken: service.createApprovalToken({
+            authToken: workspace.admin.token,
+            approvalSecret: workspace.admin.approval_secret,
+            packetId: draft.id,
+            action: 'send',
+          }).approval_token,
+        });
+      },
+      ack: (summary) => {
+        if (!summary.notification_id) {
+          throw new Error('Expected notification id.');
+        }
+        service.ackNotification({
+          authToken: alice.member.token,
+          notificationId: summary.notification_id,
+        });
+      },
+    });
+
+    await watcher.tick();
+    await watcher.tick();
+    watcher.stop();
+
+    expect(deliveredNotificationIds).toHaveLength(2);
+    expect(deliveredNotificationIds[1]).not.toBe(deliveredNotificationIds[0]);
   });
 
   test('polling watcher retries when notification delivery fails before ack', async () => {

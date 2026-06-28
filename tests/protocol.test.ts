@@ -90,6 +90,28 @@ describe('Relay packet schema', () => {
     expect(hydration.context).toContain('Provenance');
     expect(hydration.receipt.action).toBe('hydrate');
   });
+
+  test('includes clarification answers in hydration text and context budgeting', () => {
+    const packet = packetSchema.parse({
+      ...normalAsk,
+      answer: 'The failing assertion is expected 200 received 401.',
+      status: 'accepted',
+    });
+
+    const hydration = formatHydrationContext(packet, {
+      hydratedBy: 'mem_alice',
+      client: 'codex',
+    });
+
+    expect(hydration.context).toContain('Clarification answer:');
+    expect(hydration.context).toContain('expected 200 received 401');
+    expect(
+      validateContextBudget({
+        ...packet,
+        answer: 'x'.repeat(1300),
+      }).violations,
+    ).toContain('main packet text exceeds 1200 characters');
+  });
 });
 
 describe('Relay state machine', () => {

@@ -9,7 +9,7 @@ Relay Packet is the documented interchange contract. Internal A2A adapter infras
 - `ask`: requires `question`.
 - `share`: requires `finding`.
 - `reply`: requires `answer`.
-- `clarification`: requires `question` and references an original packet.
+- `clarification`: requires `question` and references an original packet. Sender answers update the original packet and return it to `pending_sender_approval`.
 
 ## Required Contract Fields
 
@@ -120,6 +120,7 @@ Examples:
 - `pending_sender_approval -> sent` only by sender.
 - `sent -> delivered` only by system.
 - `delivered -> viewed -> accepted -> hydrated` only by recipient.
+- `viewed -> clarification_requested -> pending_sender_approval` lets a recipient ask for missing context and lets the sender update the original packet before approving it again.
 - `response_drafting -> pending_recipient_approval -> replied` only by recipient.
 - `replied -> viewed -> hydrated` by the reply recipient.
 

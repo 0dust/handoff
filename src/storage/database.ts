@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE UNIQUE INDEX IF NOT EXISTS notifications_packet_member_idx ON notifications(packet_id, member_id);
 
+CREATE TABLE IF NOT EXISTS notification_delivery_aliases (
+  superseded_id TEXT PRIMARY KEY,
+  packet_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  superseded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS notification_delivery_aliases_packet_member_idx
+  ON notification_delivery_aliases(packet_id, member_id);
+
 CREATE TABLE IF NOT EXISTS approval_tokens (
   id TEXT PRIMARY KEY,
   packet_id TEXT NOT NULL,

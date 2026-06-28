@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
+import { canonicalPacketHash } from '../src/a2a/handoff-mapping.js';
 import { hashToken } from '../src/identity.js';
 import { createRelayDatabase } from '../src/storage/database.js';
 import { RelayService } from '../src/service/relay-service.js';
@@ -1055,6 +1056,167 @@ describe('two-user ask/share flows', () => {
         packetId: clarification.id,
       }),
     ).toBeUndefined();
+  });
+
+  test('sender answers clarification and returns the original packet to approval', async () => {
+    const { service, workspace, alice } = await createTwoMembers();
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Can you help?',
+      title: 'Needs details',
+      summary: 'This is intentionally incomplete.',
+      sourceClient: 'codex',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }),
+    });
+    service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+
+    const clarification = service.requestClarification({
+      authToken: alice.member.token,
+      packetId: draft.id,
+      question: 'Can you include the failing assertion?',
+      requestedEvidence: ['test failure'],
+    });
+
+    expect(() =>
+      service.answerClarification({
+        authToken: alice.member.token,
+        clarificationPacketId: clarification.id,
+        answer: 'The failing assertion is expected 200 received 401.',
+      }),
+    ).toThrow(/addressed/i);
+
+    const answered = service.answerClarification({
+      authToken: workspace.admin.token,
+      clarificationPacketId: clarification.id,
+      answer: 'The failing assertion is expected 200 received 401.',
+      evidence: [
+        {
+          kind: 'test_failure',
+          label: 'Updated test output',
+          source: 'pnpm test auth-refresh',
+          excerpt: 'expected 200 received 401',
+        },
+      ],
+      commandsOrTestsRun: ['pnpm test auth-refresh'],
+    });
+
+    expect(answered.id).toBe(draft.id);
+    expect(answered.packet.status).toBe('pending_sender_approval');
+    expect(answered.packet.summary).toBe('The failing assertion is expected 200 received 401.');
+    expect(answered.packet.evidence).toHaveLength(1);
+    expect(answered.packet.commands_or_tests_run).toEqual(['pnpm test auth-refresh']);
+    expect(answered.packet.redaction_report.blocked).toBe(false);
+    expect(
+      service.getPacketForMember({
+        authToken: workspace.admin.token,
+        packetId: clarification.id,
+      }).packet.status,
+    ).toBe('archived');
+    expect(
+      service.getPacketTransport({ authToken: workspace.admin.token, packetId: draft.id })
+        ?.task_state,
+    ).toBe('TASK_STATE_INPUT_REQUIRED');
+    expect(
+      service.getPacketTransport({ authToken: workspace.admin.token, packetId: draft.id })
+        ?.packet_hash,
+    ).toBe(canonicalPacketHash(answered.packet));
+
+    const sentAgain = service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }),
+    });
+    expect(sentAgain.packet.status).toBe('delivered');
+    expect(sentAgain.packet.summary).toBe('The failing assertion is expected 200 received 401.');
+    expect(
+      service
+        .listNotifications({
+          authToken: alice.member.token,
+          workspaceId: workspace.workspace.id,
+        })
+        .map((notification) => notification.packet_id),
+    ).toContain(draft.id);
+    expect(
+      service.getPacketTransport({ authToken: workspace.admin.token, packetId: draft.id })
+        ?.packet_hash,
+    ).toBe(canonicalPacketHash(sentAgain.packet));
+  });
+
+  test('answered clarification keeps redaction blocks on the parent approval path', async () => {
+    const { service, workspace, alice } = await createTwoMembers();
+    const draft = service.createAskDraft({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      to: '@alice',
+      question: 'Can you help?',
+      title: 'Needs details',
+      summary: 'This is intentionally incomplete.',
+      sourceClient: 'codex',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: draft.id,
+      approvalToken: approval(service, {
+        authToken: workspace.admin.token,
+        approvalSecret: workspace.admin.approval_secret,
+        packetId: draft.id,
+        action: 'send',
+      }),
+    });
+    service.viewPacket({ authToken: alice.member.token, packetId: draft.id });
+    const clarification = service.requestClarification({
+      authToken: alice.member.token,
+      packetId: draft.id,
+      question: 'Can you include the token payload?',
+      requestedEvidence: ['token payload'],
+    });
+
+    const answered = service.answerClarification({
+      authToken: workspace.admin.token,
+      clarificationPacketId: clarification.id,
+      answer: 'The payload is attached for review.',
+      evidence: [
+        {
+          kind: 'human_note',
+          label: 'Token payload',
+          source: 'sender terminal',
+          excerpt: 'private-token',
+          sensitivity: 'secret_detected',
+        },
+      ],
+    });
+
+    expect(answered.packet.status).toBe('pending_sender_approval');
+    expect(answered.packet.redaction_report.blocked).toBe(true);
+    const sendApproval = approval(service, {
+      authToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      packetId: draft.id,
+      action: 'send',
+    });
+    expect(() =>
+      service.approveAndSend({
+        authToken: workspace.admin.token,
+        packetId: draft.id,
+        approvalToken: sendApproval,
+      }),
+    ).toThrow(/redaction/i);
   });
 
   test('archiving a draft before send does not create adapter transport metadata', async () => {
