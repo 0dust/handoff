@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -19,15 +19,16 @@ import {
   A2A_RECEIVE_PATH,
   A2A_RECEIVE_UNAVAILABLE_CODE,
 } from '../a2a/schema.js';
-import { isRelayError } from '../errors.js';
+import { isRelayError, relayError } from '../errors.js';
 import {
-  claimInputSchema,
-  confidenceInputSchema,
-  evidenceInputSchema,
-  packetDraftInputShape,
+  answerClarificationInputSchema,
+  askDraftInputSchema,
+  clarificationRequestInputSchema,
   packetQueryInputShape,
-  sourceClientInputSchema,
+  replyDraftInputSchema,
+  shareDraftInputSchema,
   sourceClients,
+  updateDraftInputSchema,
 } from '../protocol/inputs.js';
 import { runtimeVersion } from '../runtime/version.js';
 import { RelayService } from '../service/relay-service.js';
@@ -35,9 +36,11 @@ import { createRelayDatabase } from '../storage/database.js';
 import { databaseIdForPath } from '../storage/database-id.js';
 
 export interface ApiServerOptions {
+  allowPublicWorkspaceBootstrap?: boolean;
   bindHost?: string;
   databaseId?: string;
   service: RelayService;
+  workspaceBootstrapToken?: string;
 }
 
 function bearer(request: { headers: Record<string, unknown> }): string {
@@ -52,6 +55,9 @@ function a2aReceivingEnabled(): boolean {
   return process.env.HANDOFF_ENABLE_A2A === '1';
 }
 
+const GENERIC_INTERNAL_ERROR_MESSAGE = 'Unexpected internal server error.';
+const PUBLIC_WORKSPACE_BOOTSTRAP_MESSAGE =
+  'Workspace bootstrap is disabled on non-loopback API listeners unless explicitly allowed.';
 const A2A_SUPPORTED_METHODS = new Set<string>(A2A_RECEIVE_METHODS);
 const A2A_REQUEST_SCHEMA = z
   .object({
@@ -81,6 +87,75 @@ function a2aJsonRpcError(input: { id: unknown; code: number; message: string; re
 
 function isA2aReceiveRequest(request: { method: string; url: string }): boolean {
   return request.method === 'POST' && request.url.split('?')[0] === A2A_RECEIVE_PATH;
+}
+
+function isLoopbackHost(host: string | undefined): boolean {
+  return host === undefined || host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+function isPublicApiBindHost(host: string | undefined): boolean {
+  return !isLoopbackHost(host);
+}
+
+function effectiveBindHost(app: FastifyInstance, options: ApiServerOptions): string | undefined {
+  if (options.bindHost) return options.bindHost;
+  const addresses = app.addresses();
+  return (
+    addresses.find((address) => isPublicApiBindHost(address.address))?.address ??
+    addresses[0]?.address
+  );
+}
+
+function envFlag(name: string): boolean {
+  return process.env[name] === '1';
+}
+
+function configuredWorkspaceBootstrapToken(options: ApiServerOptions): string | undefined {
+  return (
+    options.workspaceBootstrapToken ??
+    process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN ??
+    process.env.HANDOFF_BOOTSTRAP_TOKEN
+  );
+}
+
+function publicWorkspaceBootstrapAllowed(options: ApiServerOptions): boolean {
+  return (
+    options.allowPublicWorkspaceBootstrap === true ||
+    envFlag('HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP')
+  );
+}
+
+function headerString(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.find((entry): entry is string => typeof entry === 'string') ?? '';
+  }
+  return '';
+}
+
+function workspaceBootstrapToken(request: { headers: Record<string, unknown> }): string {
+  return headerString(request.headers['x-handoff-bootstrap-token']) || bearer(request);
+}
+
+function secureTokenEquals(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+}
+
+function workspaceBootstrapRequestAllowed(
+  request: { headers: Record<string, unknown> },
+  options: ApiServerOptions,
+  bindHost: string | undefined,
+): boolean {
+  if (!isPublicApiBindHost(bindHost)) return true;
+  if (publicWorkspaceBootstrapAllowed(options)) return true;
+  const expectedToken = configuredWorkspaceBootstrapToken(options);
+  return Boolean(
+    expectedToken && secureTokenEquals(workspaceBootstrapToken(request), expectedToken),
+  );
 }
 
 function ifNoneMatchMatches(value: unknown, etag: string): boolean {
@@ -226,12 +301,15 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
     reply.status(500).send({
       error: {
         code: 'INTERNAL_ERROR',
-        message: error instanceof Error ? error.message : 'Unknown internal error.',
+        message: GENERIC_INTERNAL_ERROR_MESSAGE,
       },
     });
   });
 
   app.post('/workspaces', async (request) => {
+    if (!workspaceBootstrapRequestAllowed(request, options, effectiveBindHost(app, options))) {
+      throw relayError('AUTH_REQUIRED', PUBLIC_WORKSPACE_BOOTSTRAP_MESSAGE, 401);
+    }
     const body = z
       .object({
         name: z.string(),
@@ -367,104 +445,22 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
   });
 
   app.post('/packets/ask', async (request) => {
-    const body = z
-      .object({
-        workspaceId: z.string(),
-        to: z.string(),
-        question: z.string(),
-        title: z.string(),
-        summary: z.string(),
-        ...packetDraftInputShape,
-      })
-      .parse(request.body);
-    return service.createAskDraft({
-      authToken: bearer(request),
-      workspaceId: body.workspaceId,
-      to: body.to,
-      question: body.question,
-      title: body.title,
-      summary: body.summary,
-      sourceClient: body.sourceClient,
-      project: body.project as any,
-      claims: body.claims as any,
-      evidence: body.evidence as any,
-      filesOrSymbols: body.filesOrSymbols,
-      commandsOrTestsRun: body.commandsOrTestsRun,
-      whatWasTried: body.whatWasTried,
-      knownFailures: body.knownFailures,
-      currentHypothesis: body.currentHypothesis,
-      confidence: body.confidence,
-      suggestedNextSteps: body.suggestedNextSteps,
-    });
+    const body = askDraftInputSchema.parse(request.body);
+    return service.createAskDraft({ authToken: bearer(request), ...body });
   });
 
   app.post('/packets/share', async (request) => {
-    const body = z
-      .object({
-        workspaceId: z.string(),
-        to: z.string(),
-        finding: z.string(),
-        title: z.string(),
-        summary: z.string(),
-        ...packetDraftInputShape,
-      })
-      .parse(request.body);
-    return service.createShareDraft({
-      authToken: bearer(request),
-      workspaceId: body.workspaceId,
-      to: body.to,
-      finding: body.finding,
-      title: body.title,
-      summary: body.summary,
-      sourceClient: body.sourceClient,
-      project: body.project as any,
-      claims: body.claims as any,
-      evidence: body.evidence as any,
-      filesOrSymbols: body.filesOrSymbols,
-      commandsOrTestsRun: body.commandsOrTestsRun,
-      whatWasTried: body.whatWasTried,
-      knownFailures: body.knownFailures,
-      currentHypothesis: body.currentHypothesis,
-      confidence: body.confidence,
-      suggestedNextSteps: body.suggestedNextSteps,
-    });
+    const body = shareDraftInputSchema.parse(request.body);
+    return service.createShareDraft({ authToken: bearer(request), ...body });
   });
 
   app.patch('/packets/:packetId/draft', async (request) => {
     const params = z.object({ packetId: z.string() }).parse(request.params);
-    const body = z
-      .object({
-        title: z.string().optional(),
-        summary: z.string().optional(),
-        question: z.string().optional(),
-        finding: z.string().optional(),
-        claims: packetDraftInputShape.claims,
-        evidence: packetDraftInputShape.evidence,
-        filesOrSymbols: packetDraftInputShape.filesOrSymbols,
-        commandsOrTestsRun: packetDraftInputShape.commandsOrTestsRun,
-        whatWasTried: packetDraftInputShape.whatWasTried,
-        knownFailures: packetDraftInputShape.knownFailures,
-        currentHypothesis: packetDraftInputShape.currentHypothesis,
-        confidence: packetDraftInputShape.confidence,
-        suggestedNextSteps: packetDraftInputShape.suggestedNextSteps,
-      })
-      .parse(request.body);
+    const body = updateDraftInputSchema.parse(request.body);
     return service.updateDraft({
       authToken: bearer(request),
       packetId: params.packetId,
-      title: body.title,
-      summary: body.summary,
-      question: body.question,
-      finding: body.finding,
-      claims: body.claims as any,
-      evidence: body.evidence as any,
-      filesOrSymbols: body.filesOrSymbols,
-      commandsOrTestsRun: body.commandsOrTestsRun,
-      whatWasTried: body.whatWasTried,
-      knownFailures: body.knownFailures,
-      currentHypothesis: body.currentHypothesis,
-      confidence: body.confidence,
-      suggestedNextSteps: body.suggestedNextSteps,
+      ...body,
     });
   });
 
@@ -564,79 +560,31 @@ export function buildApiServer(options: ApiServerOptions): FastifyInstance {
 
   app.post('/packets/:packetId/reply', async (request) => {
     const params = z.object({ packetId: z.string() }).parse(request.params);
-    const body = z
-      .object({
-        answer: z.string(),
-        summary: z.string(),
-        sourceClient: sourceClientInputSchema,
-        evidence: evidenceInputSchema,
-        confidence: confidenceInputSchema,
-      })
-      .parse(request.body);
+    const body = replyDraftInputSchema.parse(request.body);
     return service.createReplyDraft({
       authToken: bearer(request),
       packetId: params.packetId,
-      answer: body.answer,
-      summary: body.summary,
-      sourceClient: body.sourceClient,
-      evidence: body.evidence as any,
-      confidence: body.confidence,
+      ...body,
     });
   });
 
   app.post('/packets/:packetId/clarify', async (request) => {
     const params = z.object({ packetId: z.string() }).parse(request.params);
-    const body = z
-      .object({
-        question: z.string(),
-        requestedEvidence: z.array(z.string()).optional(),
-      })
-      .parse(request.body);
+    const body = clarificationRequestInputSchema.parse(request.body);
     return service.requestClarification({
       authToken: bearer(request),
       packetId: params.packetId,
-      question: body.question,
-      requestedEvidence: body.requestedEvidence,
+      ...body,
     });
   });
 
   app.post('/packets/:packetId/answer-clarification', async (request) => {
     const params = z.object({ packetId: z.string() }).parse(request.params);
-    const body = z
-      .object({
-        answer: z.string(),
-        title: z.string().optional(),
-        summary: z.string().optional(),
-        question: z.string().optional(),
-        finding: z.string().optional(),
-        claims: claimInputSchema,
-        evidence: evidenceInputSchema,
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence: confidenceInputSchema,
-        suggestedNextSteps: z.array(z.string()).optional(),
-      })
-      .parse(request.body);
+    const body = answerClarificationInputSchema.parse(request.body);
     return service.answerClarification({
       authToken: bearer(request),
       clarificationPacketId: params.packetId,
-      answer: body.answer,
-      title: body.title,
-      summary: body.summary,
-      question: body.question,
-      finding: body.finding,
-      claims: body.claims as any,
-      evidence: body.evidence as any,
-      filesOrSymbols: body.filesOrSymbols,
-      commandsOrTestsRun: body.commandsOrTestsRun,
-      whatWasTried: body.whatWasTried,
-      knownFailures: body.knownFailures,
-      currentHypothesis: body.currentHypothesis,
-      confidence: body.confidence,
-      suggestedNextSteps: body.suggestedNextSteps,
+      ...body,
     });
   });
 
@@ -734,6 +682,9 @@ export async function startApiServer(input: {
     service,
     bindHost: host,
     databaseId: databaseIdForPath(input.dbPath),
+    allowPublicWorkspaceBootstrap: envFlag('HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP'),
+    workspaceBootstrapToken:
+      process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN ?? process.env.HANDOFF_BOOTSTRAP_TOKEN,
   });
   await app.listen({ host, port: input.port ?? 3737 });
   return app;

@@ -79,6 +79,70 @@ export const packetDraftInputShape = {
   suggestedNextSteps: z.array(z.string()).optional(),
 } as const;
 
+export const askDraftInputShape = {
+  workspaceId: z.string(),
+  to: z.string(),
+  question: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  ...packetDraftInputShape,
+} as const;
+
+export const askDraftInputSchema = z.object(askDraftInputShape).strip();
+
+export const shareDraftInputShape = {
+  workspaceId: z.string(),
+  to: z.string(),
+  finding: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  ...packetDraftInputShape,
+} as const;
+
+export const shareDraftInputSchema = z.object(shareDraftInputShape).strip();
+
+export const draftMutationInputShape = {
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  question: z.string().optional(),
+  finding: z.string().optional(),
+  claims: packetDraftInputShape.claims,
+  evidence: packetDraftInputShape.evidence,
+  filesOrSymbols: packetDraftInputShape.filesOrSymbols,
+  commandsOrTestsRun: packetDraftInputShape.commandsOrTestsRun,
+  whatWasTried: packetDraftInputShape.whatWasTried,
+  knownFailures: packetDraftInputShape.knownFailures,
+  currentHypothesis: packetDraftInputShape.currentHypothesis,
+  confidence: packetDraftInputShape.confidence,
+  suggestedNextSteps: packetDraftInputShape.suggestedNextSteps,
+} as const;
+
+export const updateDraftInputSchema = z.object(draftMutationInputShape).strip();
+
+export const answerClarificationInputShape = {
+  answer: z.string(),
+  ...draftMutationInputShape,
+} as const;
+
+export const answerClarificationInputSchema = z.object(answerClarificationInputShape).strip();
+
+export const replyDraftInputShape = {
+  answer: z.string(),
+  summary: z.string(),
+  sourceClient: sourceClientInputSchema,
+  evidence: evidenceInputSchema,
+  confidence: confidenceInputSchema,
+} as const;
+
+export const replyDraftInputSchema = z.object(replyDraftInputShape).strip();
+
+export const clarificationRequestInputShape = {
+  question: z.string(),
+  requestedEvidence: z.array(z.string()).optional(),
+} as const;
+
+export const clarificationRequestInputSchema = z.object(clarificationRequestInputShape).strip();
+
 export const packetQueryInputShape = {
   project: z.string().optional(),
   sender: z.string().optional(),

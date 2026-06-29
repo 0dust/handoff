@@ -15,6 +15,7 @@ They document the strict approval-token flow. For profile-backed MCP sessions th
 ## Start A Coordination Server
 
 ```bash
+export HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN="<random-one-time-setup-token>"
 npx -y handoff-relay server start \
   --db /srv/handoff/relay.db \
   --host 10.0.0.10 \
@@ -30,9 +31,12 @@ npx -y handoff-relay server start \
   --port 3737
 ```
 
+Non-loopback servers require an explicit bootstrap control before `POST /workspaces` will create the first workspace. Keep `HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN` set on the server and in the terminal that runs `workspace create`, then unset it after the first admin has a token. If you intentionally want a temporary open bootstrap window instead, start the server with `HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP=1`, create the workspace, and restart without that environment variable.
+
 ## Create A Workspace
 
 ```bash
+export HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN="<same-random-one-time-setup-token>"
 npx -y handoff-relay workspace create \
   --server-url http://10.0.0.10:3737 \
   --name "Relay Demo" \

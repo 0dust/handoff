@@ -404,6 +404,8 @@ npx -y handoff-relay server start \
   --port 3737
 ```
 
+When a manual server binds to a non-loopback host, first-workspace creation is closed by default. Set `HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN` on the server and in the terminal that runs `workspace create`, or use the temporary `HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP=1` bootstrap allowance only while creating the first workspace.
+
 See [Local self-hosting](docs/local-self-hosting.md) and [Advanced manual setup](docs/advanced-manual-setup.md).
 
 ## Leaving Or Removing Members

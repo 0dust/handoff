@@ -161,6 +161,37 @@ function parseListOption(value: string | undefined): string[] | undefined {
     .filter(Boolean);
 }
 
+function packetContextFieldsFromOptions(options: any) {
+  return {
+    claims: parseJsonOption(options.claimsJson),
+    evidence: parseJsonOption(options.evidenceJson),
+    filesOrSymbols: parseListOption(options.files),
+    commandsOrTestsRun: parseListOption(options.tests),
+    whatWasTried: parseListOption(options.tried),
+    knownFailures: parseListOption(options.failures),
+    currentHypothesis: options.hypothesis,
+    confidence: options.confidence,
+    suggestedNextSteps: parseListOption(options.nextSteps),
+  };
+}
+
+function packetDraftFieldsFromOptions(options: any) {
+  return {
+    sourceClient: options.sourceClient,
+    ...packetContextFieldsFromOptions(options),
+  };
+}
+
+function packetEditFieldsFromOptions(options: any) {
+  return {
+    title: options.title,
+    summary: options.summary,
+    question: options.question,
+    finding: options.finding,
+    ...packetContextFieldsFromOptions(options),
+  };
+}
+
 function addAuthOptions(command: Command): Command {
   return addCommonOptions(command)
     .option('--profile <name>', 'Profile name')
@@ -368,16 +399,7 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
       question,
       title: options.title,
       summary: options.summary,
-      sourceClient: options.sourceClient,
-      claims: parseJsonOption(options.claimsJson),
-      evidence: parseJsonOption(options.evidenceJson),
-      filesOrSymbols: parseListOption(options.files),
-      commandsOrTestsRun: parseListOption(options.tests),
-      whatWasTried: parseListOption(options.tried),
-      knownFailures: parseListOption(options.failures),
-      currentHypothesis: options.hypothesis,
-      confidence: options.confidence,
-      suggestedNextSteps: parseListOption(options.nextSteps),
+      ...packetDraftFieldsFromOptions(options),
     });
     closeBackend(auth.backend);
     write(io, result, options.json);
@@ -412,16 +434,7 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
       finding: options.finding,
       title: options.title,
       summary: options.summary,
-      sourceClient: options.sourceClient,
-      claims: parseJsonOption(options.claimsJson),
-      evidence: parseJsonOption(options.evidenceJson),
-      filesOrSymbols: parseListOption(options.files),
-      commandsOrTestsRun: parseListOption(options.tests),
-      whatWasTried: parseListOption(options.tried),
-      knownFailures: parseListOption(options.failures),
-      currentHypothesis: options.hypothesis,
-      confidence: options.confidence,
-      suggestedNextSteps: parseListOption(options.nextSteps),
+      ...packetDraftFieldsFromOptions(options),
     });
     closeBackend(auth.backend);
     write(io, result, options.json);
@@ -451,19 +464,7 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
     const result = await auth.backend.updateDraft({
       authToken: auth.authToken,
       packetId,
-      title: options.title,
-      summary: options.summary,
-      question: options.question,
-      finding: options.finding,
-      claims: parseJsonOption(options.claimsJson),
-      evidence: parseJsonOption(options.evidenceJson),
-      filesOrSymbols: parseListOption(options.files),
-      commandsOrTestsRun: parseListOption(options.tests),
-      whatWasTried: parseListOption(options.tried),
-      knownFailures: parseListOption(options.failures),
-      currentHypothesis: options.hypothesis,
-      confidence: options.confidence,
-      suggestedNextSteps: parseListOption(options.nextSteps),
+      ...packetEditFieldsFromOptions(options),
     });
     closeBackend(auth.backend);
     write(io, result, options.json);
@@ -668,19 +669,7 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
       authToken: auth.authToken,
       packetId,
       answer,
-      title: options.title,
-      summary: options.summary,
-      question: options.question,
-      finding: options.finding,
-      claims: parseJsonOption(options.claimsJson),
-      evidence: parseJsonOption(options.evidenceJson),
-      filesOrSymbols: parseListOption(options.files),
-      commandsOrTestsRun: parseListOption(options.tests),
-      whatWasTried: parseListOption(options.tried),
-      knownFailures: parseListOption(options.failures),
-      currentHypothesis: options.hypothesis,
-      confidence: options.confidence,
-      suggestedNextSteps: parseListOption(options.nextSteps),
+      ...packetEditFieldsFromOptions(options),
     });
     closeBackend(auth.backend);
     write(io, result, options.json);

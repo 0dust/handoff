@@ -260,7 +260,7 @@ describe('approval and privacy contracts', () => {
     expect(report.warnings.some((warning) => warning.field === 'files_or_symbols.0')).toBe(true);
   });
 
-  test('metadata-only admins cannot search private body text', async () => {
+  test('metadata-only admins cannot search private body or title and summary text', async () => {
     const { service } = createService();
     const { workspace, alice, bob } = await setupTwoMembers(service);
     const draft = service.createAskDraft({
@@ -268,8 +268,8 @@ describe('approval and privacy contracts', () => {
       workspaceId: workspace.workspace.id,
       to: '@bob',
       question: 'needle-private-refresh-token',
-      title: 'Metadata title',
-      summary: 'Metadata-visible summary should not be used as body search oracle.',
+      title: 'needle-private-title',
+      summary: 'needle-private-summary should not be used as a search oracle.',
       sourceClient: 'codex',
       evidence: [
         {
@@ -302,11 +302,57 @@ describe('approval and privacy contracts', () => {
     ).toEqual([]);
     expect(
       service.searchPackets({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        query: 'needle-private-title',
+      }),
+    ).toEqual([]);
+    expect(
+      service.searchPackets({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        query: 'needle-private-summary',
+      }),
+    ).toEqual([]);
+    expect(
+      service.searchPackets({
+        authToken: workspace.admin.token,
+        workspaceId: workspace.workspace.id,
+        query: 'needle-private-evidence-label',
+      }),
+    ).toEqual([]);
+
+    const adminMetadata = service.listHistory({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+    });
+    expect(adminMetadata).toHaveLength(1);
+    expect(adminMetadata[0]).toMatchObject({
+      packet_id: draft.id,
+      body_access: false,
+      title: '[redacted]',
+      summary: '[redacted]',
+    });
+
+    expect(
+      service.searchPackets({
         authToken: bob.member.token,
         workspaceId: workspace.workspace.id,
         query: 'needle-private-refresh-token',
       }),
     ).toHaveLength(1);
+    expect(
+      service.searchPackets({
+        authToken: bob.member.token,
+        workspaceId: workspace.workspace.id,
+        query: 'needle-private-title',
+      })[0],
+    ).toMatchObject({
+      packet_id: draft.id,
+      body_access: true,
+      title: 'needle-private-title',
+      summary: 'needle-private-summary should not be used as a search oracle.',
+    });
   });
 
   test('approval-token API rejects static local-renderer header spoofing', async () => {
@@ -512,6 +558,18 @@ describe('approval and privacy contracts', () => {
       packetId: draft.id,
       approvalToken: sendApproval.approval_token,
     });
+    service.viewPacket({ authToken: bob.member.token, packetId: draft.id });
+    service.requestClarification({
+      authToken: bob.member.token,
+      packetId: draft.id,
+      question: 'secret clarification body text',
+      requestedEvidence: ['secret provenance label'],
+    });
+    service.searchPackets({
+      authToken: bob.member.token,
+      workspaceId: workspace.workspace.id,
+      query: 'private packet body',
+    });
 
     expect(() =>
       service.getPacketForMember({ authToken: workspace.admin.token, packetId: draft.id }),
@@ -523,17 +581,35 @@ describe('approval and privacy contracts', () => {
         packetId: draft.id,
       }).length,
     ).toBeGreaterThan(0);
-
-    const search = service.searchPackets({
+    const audit = service.listAuditReceipts({
       authToken: workspace.admin.token,
       workspaceId: workspace.workspace.id,
-      query: 'Sensitive',
     });
-    expect(search).toHaveLength(1);
-    expect(search[0]).not.toHaveProperty('evidence');
-    expect(search[0]).toMatchObject({
+    const serializedAudit = JSON.stringify(audit);
+    expect(serializedAudit).not.toContain('secret clarification body text');
+    expect(serializedAudit).not.toContain('secret provenance label');
+    expect(serializedAudit).not.toContain('private packet body');
+    expect(audit.find((receipt) => receipt.action === 'clarify')?.metadata).toMatchObject({
+      question_present: true,
+      question_length: 'secret clarification body text'.length,
+      requested_evidence_count: 1,
+    });
+    expect(audit.find((receipt) => receipt.action === 'search')?.metadata).toMatchObject({
+      query_present: true,
+      query_length: 'private packet body'.length,
+    });
+
+    const search = service.listHistory({
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+    });
+    const originalSearchResult = search.find((packet) => packet.packet_id === draft.id);
+    expect(originalSearchResult).toBeDefined();
+    expect(originalSearchResult).not.toHaveProperty('evidence');
+    expect(originalSearchResult).toMatchObject({
       packet_id: draft.id,
-      title: 'Sensitive auth question',
+      title: '[redacted]',
+      summary: '[redacted]',
       body_access: false,
     });
 

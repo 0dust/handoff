@@ -29,6 +29,18 @@ npx -y handoff-relay server start \
 
 Put the host behind your normal network controls. Handoff does not provide a hosted cloud service.
 
+When the server binds to `0.0.0.0` or a non-loopback host, unauthenticated `POST /workspaces` bootstrap is denied by default. For manual first-workspace setup, prefer a setup token:
+
+```bash
+export HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN="<random-one-time-setup-token>"
+npx -y handoff-relay server start \
+  --db /srv/handoff/relay.db \
+  --host 10.0.0.10 \
+  --port 3737
+```
+
+Use the same `HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN` only in the terminal that runs `workspace create`. As a less restrictive one-time alternative, start the public listener with `HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP=1`, create the first workspace, then restart without that environment variable.
+
 The self-hosted server is a Handoff coordination server for Relay Packets, profiles, approvals, and audit receipts. Do not expose it or document it as a public A2A service. Any A2A adapter layer is internal infrastructure behind the Handoff API and stays on the same private/self-hosted trust boundary.
 
 For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
