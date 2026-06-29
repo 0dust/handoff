@@ -4,13 +4,14 @@ import { z } from 'zod';
 
 import { RelayApiClient } from '../api/client.js';
 import {
-  claimInputSchema,
-  confidenceInputSchema,
-  evidenceInputSchema,
+  answerClarificationInputShape,
+  askDraftInputShape,
+  clarificationRequestInputShape,
+  draftMutationInputShape,
   historyFilterInputSchema,
   packetQueryInputShape,
-  projectInputSchema,
-  sourceClientInputSchema,
+  replyDraftInputShape,
+  shareDraftInputShape,
 } from '../protocol/inputs.js';
 import type { RelayPacket } from '../protocol/schema.js';
 import { runtimeVersion } from '../runtime/version.js';
@@ -26,14 +27,35 @@ export interface McpToolDefinition {
   handler: (args: any) => any | Promise<any>;
 }
 
-const sourceClient = sourceClientInputSchema;
-const confidence = confidenceInputSchema;
 const historyFilter = historyFilterInputSchema;
-const projectInput = projectInputSchema;
 const packetQueryInput = packetQueryInputShape;
-const evidenceInput = evidenceInputSchema;
-const claimInput = claimInputSchema;
 const reviewableInboxStatuses = ['delivered', 'replied', 'viewed', 'accepted'];
+const askMcpInputShape = {
+  authToken: z.string(),
+  ...askDraftInputShape,
+  to: askDraftInputShape.to.describe('@handle recipient'),
+} as const;
+const shareMcpInputShape = { authToken: z.string(), ...shareDraftInputShape } as const;
+const updateDraftMcpInputShape = {
+  authToken: z.string(),
+  packetId: z.string(),
+  ...draftMutationInputShape,
+} as const;
+const answerClarificationMcpInputShape = {
+  authToken: z.string(),
+  packetId: z.string().describe('Clarification packet id'),
+  ...answerClarificationInputShape,
+} as const;
+const replyDraftMcpInputShape = {
+  authToken: z.string(),
+  packetId: z.string(),
+  ...replyDraftInputShape,
+} as const;
+const clarificationRequestMcpInputShape = {
+  authToken: z.string(),
+  packetId: z.string(),
+  ...clarificationRequestInputShape,
+} as const;
 
 type RelayBackend = RelayService | RelayApiClient;
 
@@ -139,25 +161,7 @@ export function getMcpToolDefinitions(
       name: 'relay_ask',
       description:
         'Sender step 1/2: draft a human-reviewed ask packet for a teammate. Show the returned packet and redaction_report to the human, then send with relay_send_approved or relay_approve.',
-      inputSchema: {
-        authToken: z.string(),
-        workspaceId: z.string(),
-        to: z.string().describe('@handle recipient'),
-        question: z.string(),
-        title: z.string(),
-        summary: z.string(),
-        sourceClient,
-        project: projectInput,
-        claims: claimInput,
-        evidence: evidenceInput,
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence,
-        suggestedNextSteps: z.array(z.string()).optional(),
-      },
+      inputSchema: askMcpInputShape,
       handler: async (args) => {
         const result = await service.createAskDraft(args);
         return { id: result.id, status: result.packet.status, packet: result.packet };
@@ -167,25 +171,7 @@ export function getMcpToolDefinitions(
       name: 'relay_share',
       description:
         'Sender step 1/2: draft a human-reviewed share packet for a teammate. Show the returned packet and redaction_report to the human, then send with relay_send_approved or relay_approve.',
-      inputSchema: {
-        authToken: z.string(),
-        workspaceId: z.string(),
-        to: z.string(),
-        finding: z.string(),
-        title: z.string(),
-        summary: z.string(),
-        sourceClient,
-        project: projectInput,
-        claims: claimInput,
-        evidence: evidenceInput,
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence,
-        suggestedNextSteps: z.array(z.string()).optional(),
-      },
+      inputSchema: shareMcpInputShape,
       handler: async (args) => {
         const result = await service.createShareDraft(args);
         return { id: result.id, status: result.packet.status, packet: result.packet };
@@ -194,23 +180,7 @@ export function getMcpToolDefinitions(
     {
       name: 'relay_update_draft',
       description: 'Edit an ask/share draft before it is approved and sent.',
-      inputSchema: {
-        authToken: z.string(),
-        packetId: z.string(),
-        title: z.string().optional(),
-        summary: z.string().optional(),
-        question: z.string().optional(),
-        finding: z.string().optional(),
-        claims: claimInput,
-        evidence: evidenceInput,
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence,
-        suggestedNextSteps: z.array(z.string()).optional(),
-      },
+      inputSchema: updateDraftMcpInputShape,
       handler: async (args) => service.updateDraft(args),
     },
     {
@@ -398,50 +368,20 @@ export function getMcpToolDefinitions(
       name: 'relay_reply',
       description:
         'Draft a reply to an accepted/hydrated ask packet. Requires relay_approve to return.',
-      inputSchema: {
-        authToken: z.string(),
-        packetId: z.string(),
-        answer: z.string(),
-        summary: z.string(),
-        sourceClient,
-        evidence: evidenceInput,
-        confidence,
-      },
+      inputSchema: replyDraftMcpInputShape,
       handler: async (args) => service.createReplyDraft(args),
     },
     {
       name: 'relay_clarify',
       description: 'Request clarification from the sender after reviewing an addressed packet.',
-      inputSchema: {
-        authToken: z.string(),
-        packetId: z.string(),
-        question: z.string(),
-        requestedEvidence: z.array(z.string()).optional(),
-      },
+      inputSchema: clarificationRequestMcpInputShape,
       handler: async (args) => service.requestClarification(args),
     },
     {
       name: 'relay_answer_clarification',
       description:
         'Answer a clarification request addressed to the sender and return the original packet to sender approval.',
-      inputSchema: {
-        authToken: z.string(),
-        packetId: z.string().describe('Clarification packet id'),
-        answer: z.string(),
-        title: z.string().optional(),
-        summary: z.string().optional(),
-        question: z.string().optional(),
-        finding: z.string().optional(),
-        claims: claimInput,
-        evidence: evidenceInput,
-        filesOrSymbols: z.array(z.string()).optional(),
-        commandsOrTestsRun: z.array(z.string()).optional(),
-        whatWasTried: z.array(z.string()).optional(),
-        knownFailures: z.array(z.string()).optional(),
-        currentHypothesis: z.string().optional(),
-        confidence,
-        suggestedNextSteps: z.array(z.string()).optional(),
-      },
+      inputSchema: answerClarificationMcpInputShape,
       handler: async (args) => {
         const result = await service.answerClarification(args);
         return {

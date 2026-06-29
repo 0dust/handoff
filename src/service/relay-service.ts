@@ -44,6 +44,7 @@ import {
   type PacketTransportRecord,
 } from '../storage/packet-transport-table.js';
 import { PacketRepository, type PacketRepositoryFilters } from './packet-repository.js';
+import { presentPacketSearchResult, type PacketSearchResult } from './packet-result-presenter.js';
 
 interface MemberRow {
   id: string;
@@ -106,7 +107,6 @@ interface NotificationSummaryRow extends NotificationRow {
 }
 
 const ACCEPTED_INVITE_RETRY_WINDOW_MS = 15 * 60 * 1000;
-
 export interface CreateWorkspaceInput {
   name: string;
   adminHandle: string;
@@ -225,23 +225,7 @@ export interface PacketResult {
   packet: RelayPacket;
 }
 
-export interface PacketSearchResult {
-  packet_id: string;
-  packet_type: RelayPacket['packet_type'];
-  workspace_id: string;
-  sender_member_id: string;
-  recipient_member_ids: string[];
-  status: RelayPacket['status'];
-  title: string;
-  summary: string;
-  project: RelayPacket['project'];
-  source_client: RelayPacket['source_client'];
-  created_at: string;
-  updated_at: string;
-  expires_at?: string;
-  recheck_by?: string;
-  body_access: boolean;
-}
+export type { PacketSearchResult };
 
 export interface MemberRemovalResult {
   member: MemberRecord;
@@ -1325,7 +1309,11 @@ export class RelayService {
         actorMemberId: actor.id,
         packetId: original.packet_id,
         workspaceId: original.workspace_id,
-        metadata: { question: input.question, requested_evidence: input.requestedEvidence ?? [] },
+        metadata: {
+          question_present: input.question.trim().length > 0,
+          question_length: input.question.length,
+          requested_evidence_count: input.requestedEvidence?.length ?? 0,
+        },
       });
 
       const packet = this.preparePacket(
@@ -1501,7 +1489,7 @@ export class RelayService {
       action: 'search',
       actorMemberId: actor.id,
       workspaceId: input.workspaceId,
-      metadata: { query, filters: this.auditFilterMetadata(input) },
+      metadata: this.auditSearchMetadata(input, query),
     });
     return results.map((packet) => this.toSearchResult(actor, packet, adminBodyAccess));
   }
@@ -1533,7 +1521,7 @@ export class RelayService {
       action: 'search',
       actorMemberId: actor.id,
       workspaceId: input.workspaceId,
-      metadata: { query, history_filter: filter, filters: this.auditFilterMetadata(input) },
+      metadata: this.auditSearchMetadata(input, query, { history_filter: filter }),
     });
     return results.map((packet) => this.toSearchResult(actor, packet, adminBodyAccess));
   }
@@ -1820,23 +1808,8 @@ export class RelayService {
     packet: RelayPacket,
     adminBodyAccess: boolean,
   ): PacketSearchResult {
-    return {
-      packet_id: packet.packet_id,
-      packet_type: packet.packet_type,
-      workspace_id: packet.workspace_id,
-      sender_member_id: packet.sender_member_id,
-      recipient_member_ids: packet.recipient_member_ids,
-      status: packet.status,
-      title: packet.title,
-      summary: packet.summary,
-      project: packet.project,
-      source_client: packet.source_client,
-      created_at: packet.created_at,
-      updated_at: packet.updated_at,
-      expires_at: packet.expires_at,
-      recheck_by: packet.recheck_by,
-      body_access: this.canReadBody(actor, packet, { adminBodyAccess }),
-    };
+    const bodyAccess = this.canReadBody(actor, packet, { adminBodyAccess });
+    return presentPacketSearchResult({ bodyAccess, packet });
   }
 
   private auditFilterMetadata(input: PacketQueryFilters): Record<string, string> {
@@ -1846,10 +1819,26 @@ export class RelayService {
         sender: input.sender,
         recipient: input.recipient,
         status: input.status,
-        file_or_symbol: input.fileOrSymbol,
-        ticket_or_pr: input.ticketOrPr,
       }).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1]),
     );
+  }
+
+  private auditSearchMetadata(
+    input: PacketQueryFilters,
+    query: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    const privateFilterFields = [
+      input.fileOrSymbol ? 'file_or_symbol' : undefined,
+      input.ticketOrPr ? 'ticket_or_pr' : undefined,
+    ].filter((field): field is string => typeof field === 'string');
+    return {
+      ...extra,
+      query_present: query.length > 0,
+      query_length: query.length,
+      filters: this.auditFilterMetadata(input),
+      private_filter_fields: privateFilterFields,
+    };
   }
 
   private adminBodyAccessFor(actor: MemberRecord, workspaceId: string): boolean {

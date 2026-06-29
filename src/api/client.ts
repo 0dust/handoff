@@ -23,8 +23,20 @@ export class RelayApiClient {
     adminHandle: string;
     adminName: string;
     adminBodyAccess?: boolean;
+    bootstrapToken?: string;
   }) {
-    return this.request('/workspaces', { method: 'POST', body: input });
+    const { bootstrapToken, ...body } = input;
+    const resolvedBootstrapToken =
+      bootstrapToken ??
+      process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN ??
+      process.env.HANDOFF_BOOTSTRAP_TOKEN;
+    return this.request('/workspaces', {
+      method: 'POST',
+      body,
+      headers: resolvedBootstrapToken
+        ? { 'x-handoff-bootstrap-token': resolvedBootstrapToken }
+        : undefined,
+    });
   }
 
   async inviteMember(input: { adminToken: string; workspaceId: string; handle: string }) {

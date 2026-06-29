@@ -57,7 +57,7 @@ Authorization is enforced in the service/storage layer:
 - Audit receipts are available through CLI, API, and MCP. Workspace-wide audit listing is admin-only; packet-specific audit listing follows metadata visibility.
 - A2A Trust Receipt metadata is workspace-scoped and follows the same sensitivity posture as audit metadata. It is not public proof material.
 - Revoked members cannot authenticate and cannot receive future packets.
-- Search and history filter before returning results. Admins without body access can search and filter metadata fields only; body/provenance text is not exposed as a search oracle.
+- Search and history filter before returning results. Admins without body access can search and filter stable metadata fields only; titles, summaries, body, and provenance text are not exposed as a search oracle and title/summary result text is redacted.
 
 ## Audit Receipts
 

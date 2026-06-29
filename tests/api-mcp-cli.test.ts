@@ -11,6 +11,7 @@ import { RelayApiClient } from '../src/api/client.js';
 import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
 import { registerServerCommands } from '../src/cli/server-commands.js';
+import { relayError } from '../src/errors.js';
 import { createMcpServer, getMcpToolDefinitions } from '../src/mcp/server.js';
 import {
   inspectBackgroundNotificationWatcher,
@@ -677,6 +678,227 @@ describe('coordination API', () => {
     expect(response.json().error).toMatchObject({
       code: 'INVALID_INPUT',
     });
+  });
+
+  test('unexpected API errors return a generic 500 while Relay errors keep client-facing messages', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    app.get('/test/unexpected-error', async () => {
+      throw new Error('sqlite path /Users/sam/private/relay.db is locked');
+    });
+    app.get('/test/relay-error', async () => {
+      throw relayError('FORBIDDEN', 'Only workspace admins can invite members.', 403);
+    });
+
+    const unexpected = await app.inject({ method: 'GET', url: '/test/unexpected-error' });
+    const intentional = await app.inject({ method: 'GET', url: '/test/relay-error' });
+
+    expect(unexpected.statusCode).toBe(500);
+    expect(unexpected.json().error).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      message: 'Unexpected internal server error.',
+    });
+    expect(unexpected.body).not.toContain('/Users/sam/private/relay.db');
+    expect(unexpected.body).not.toContain('sqlite path');
+    expect(intentional.statusCode).toBe(403);
+    expect(intentional.json().error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only workspace admins can invite members.',
+    });
+  });
+
+  test('public workspace bootstrap is denied by default and allowed explicitly', async () => {
+    const previousAllow = process.env.HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP;
+    const previousWorkspaceToken = process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN;
+    const previousBootstrapToken = process.env.HANDOFF_BOOTSTRAP_TOKEN;
+    try {
+      delete process.env.HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP;
+      delete process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN;
+      delete process.env.HANDOFF_BOOTSTRAP_TOKEN;
+
+      const denied = buildApiServer({ service: createService().service, bindHost: '0.0.0.0' });
+      const local = buildApiServer({ service: createService().service, bindHost: '127.0.0.1' });
+      const allowed = buildApiServer({
+        service: createService().service,
+        bindHost: '10.0.0.10',
+        allowPublicWorkspaceBootstrap: true,
+      });
+      const tokenProtected = buildApiServer({
+        service: createService().service,
+        bindHost: '0.0.0.0',
+        workspaceBootstrapToken: 'setup-token',
+      });
+      const clientTokenProtected = buildApiServer({
+        service: createService().service,
+        bindHost: '0.0.0.0',
+        workspaceBootstrapToken: 'client-token',
+      });
+      const payload = { name: 'Bootstrap Team', adminHandle: 'sam', adminName: 'Sam' };
+
+      const deniedResponse = await denied.inject({ method: 'POST', url: '/workspaces', payload });
+      const localResponse = await local.inject({ method: 'POST', url: '/workspaces', payload });
+      const allowedResponse = await allowed.inject({ method: 'POST', url: '/workspaces', payload });
+      const wrongTokenResponse = await tokenProtected.inject({
+        method: 'POST',
+        url: '/workspaces',
+        headers: { 'x-handoff-bootstrap-token': 'wrong-token' },
+        payload,
+      });
+      const tokenResponse = await tokenProtected.inject({
+        method: 'POST',
+        url: '/workspaces',
+        headers: { 'x-handoff-bootstrap-token': 'setup-token' },
+        payload,
+      });
+      await clientTokenProtected.listen({ host: '127.0.0.1', port: 0 });
+      const address = clientTokenProtected.server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Expected API server address');
+      }
+      const client = new RelayApiClient({ serverUrl: `http://127.0.0.1:${address.port}` });
+      try {
+        await expect(
+          client.createWorkspace({
+            ...payload,
+            adminHandle: 'alex',
+            bootstrapToken: 'client-token',
+          }),
+        ).resolves.toMatchObject({
+          admin: { handle: 'alex' },
+        });
+      } finally {
+        await clientTokenProtected.close();
+      }
+
+      expect(deniedResponse.statusCode).toBe(401);
+      expect(deniedResponse.json().error).toMatchObject({
+        code: 'AUTH_REQUIRED',
+        message:
+          'Workspace bootstrap is disabled on non-loopback API listeners unless explicitly allowed.',
+      });
+      expect(localResponse.statusCode).toBe(200);
+      expect(allowedResponse.statusCode).toBe(200);
+      expect(wrongTokenResponse.statusCode).toBe(401);
+      expect(tokenResponse.statusCode).toBe(200);
+    } finally {
+      if (previousAllow === undefined) delete process.env.HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP;
+      else process.env.HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP = previousAllow;
+      if (previousWorkspaceToken === undefined)
+        delete process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN;
+      else process.env.HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN = previousWorkspaceToken;
+      if (previousBootstrapToken === undefined) delete process.env.HANDOFF_BOOTSTRAP_TOKEN;
+      else process.env.HANDOFF_BOOTSTRAP_TOKEN = previousBootstrapToken;
+    }
+  });
+
+  test('exported API builder denies public bootstrap when listen host is public', async () => {
+    const publicBuilder = buildApiServer({ service: createService().service });
+    await publicBuilder.listen({ host: '0.0.0.0', port: 0 });
+    const address = publicBuilder.server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected API server address');
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/workspaces`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Public Team', adminHandle: 'sam', adminName: 'Sam' }),
+      });
+      const payload = (await response.json()) as any;
+
+      expect(response.status).toBe(401);
+      expect(payload.error).toMatchObject({ code: 'AUTH_REQUIRED' });
+    } finally {
+      await publicBuilder.close();
+    }
+  });
+
+  test('HTTP packet command endpoints ignore harmless extra top-level fields', async () => {
+    const { service } = createService();
+    const app = buildApiServer({ service });
+    const workspace = service.createWorkspace({
+      name: 'API Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    const alice = service.acceptInvite({
+      inviteToken: invite.invite.token,
+      displayName: 'Alice',
+    });
+
+    const ask = await app.inject({
+      method: 'POST',
+      url: '/packets/ask',
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+      payload: {
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        question: 'Can you inspect auth refresh?',
+        title: 'Auth refresh',
+        summary: 'Refresh returns 401.',
+        sourceClient: 'codex',
+        requestId: 'client-generated-id',
+      },
+    });
+    const share = await app.inject({
+      method: 'POST',
+      url: '/packets/share',
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+      payload: {
+        workspaceId: workspace.workspace.id,
+        to: '@alice',
+        finding: 'Refresh retry skips persistence.',
+        title: 'Refresh retry',
+        summary: 'Retry ordering bug.',
+        sourceClient: 'codex',
+        redundantWorkspaceId: workspace.workspace.id,
+      },
+    });
+    const askPayload = ask.json();
+    const update = await app.inject({
+      method: 'PATCH',
+      url: `/packets/${askPayload.id}/draft`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+      payload: { summary: 'Updated summary.', clientTrace: 'ignored' },
+    });
+    const sendApproval = service.createApprovalToken({
+      authToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      packetId: askPayload.id,
+      action: 'send',
+    });
+    service.approveAndSend({
+      authToken: workspace.admin.token,
+      packetId: askPayload.id,
+      approvalToken: sendApproval.approval_token,
+    });
+    service.viewPacket({ authToken: alice.member.token, packetId: askPayload.id });
+    const clarification = service.requestClarification({
+      authToken: alice.member.token,
+      packetId: askPayload.id,
+      question: 'Can you add the failing assertion?',
+    });
+    const answer = await app.inject({
+      method: 'POST',
+      url: `/packets/${clarification.id}/answer-clarification`,
+      headers: { authorization: `Bearer ${workspace.admin.token}` },
+      payload: {
+        answer: 'expected 200 received 401',
+        extraClientMetadata: 'ignored',
+      },
+    });
+
+    expect(ask.statusCode).toBe(200);
+    expect(share.statusCode).toBe(200);
+    expect(update.statusCode).toBe(200);
+    expect(update.json().packet.summary).toBe('Updated summary.');
+    expect(answer.statusCode).toBe(200);
+    expect(answer.json().packet.summary).toBe('expected 200 received 401');
   });
 
   test('search and history honor pagination query parameters', async () => {
