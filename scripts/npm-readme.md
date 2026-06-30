@@ -30,6 +30,8 @@ Use `--install-mcp claude` for Claude Code or `--install-mcp cursor` for Cursor.
 
 `start` creates the shared workspace, host profile, SQLite coordination database, reachable server URL, MCP config when requested, and a background notification watcher. `join` stores the teammate's local profile and member credentials, then starts that teammate's local notification watcher. To opt out later, run `npx -y handoff-relay watch --stop`.
 
+For dedicated self-hosted servers started with `server start` on a non-loopback host, first-workspace creation requires `HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN` or a temporary `HANDOFF_ALLOW_PUBLIC_WORKSPACE_BOOTSTRAP=1` bootstrap window. See `docs/local-self-hosting.md` and `docs/advanced-manual-setup.md` for the manual setup flow.
+
 ## Use With Agents
 
 Handoff is meant to run behind your coding agent as a stdio MCP server. The normal workflow happens inside the agent, not by manually copying CLI output around.
