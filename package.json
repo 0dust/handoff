@@ -1,6 +1,6 @@
 {
   "name": "handoff-relay",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Human-approved context handoffs between coding agents.",
   "type": "module",
   "license": "MIT",
