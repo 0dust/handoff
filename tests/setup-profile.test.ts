@@ -1769,6 +1769,37 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI restart preserves a saved public invite URL', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      await startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+        publicUrl: 'https://handoff.example.test',
+      });
+
+      const { result } = await runCliWithImplicitWatcher(['restart', '--json']);
+      const parsed = JSON.parse(result.stdout);
+      const store = createProfileStore({ home });
+
+      expect(result.code).toBe(0);
+      expect(parsed.publicInviteBaseUrl).toBe('https://handoff.example.test');
+      expect(store.loadProfile('default')?.publicInviteBaseUrl).toBe(
+        'https://handoff.example.test',
+      );
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
   test('CLI uninstall-mcp removes the selected client and preserves other clients', async () => {
     const home = tempHome();
     const previous = process.env.HOME;
@@ -2253,6 +2284,29 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         expect.objectContaining({ client: 'codex', installed: false }),
         expect.objectContaining({ client: 'claude-code', installed: false }),
         expect.objectContaining({ client: 'cursor', installed: false }),
+      ]),
+    );
+  });
+
+  test('MCP uninstall preserves Handoff entries for a different profile', () => {
+    const home = tempHome();
+    installMcpConfig({ client: 'codex', env: { HOME: home }, profileName: 'other' });
+    installMcpConfig({ client: 'claude-code', env: { HOME: home }, profileName: 'other' });
+
+    const result = uninstallMcpConfigs({ env: { HOME: home }, profileName: 'default' });
+    const statuses = detectMcpConfigs({ env: { HOME: home }, profileName: 'other' });
+
+    expect(result.status).toBe('missing');
+    expect(result.configs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ client: 'codex', removed: false }),
+        expect.objectContaining({ client: 'claude-code', removed: false }),
+      ]),
+    );
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ client: 'codex', installed: true }),
+        expect.objectContaining({ client: 'claude-code', installed: true }),
       ]),
     );
   });

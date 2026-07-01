@@ -138,9 +138,9 @@ export function uninstallMcpConfig(input: {
   let removed = false;
 
   if (input.client === 'codex') {
-    removed = uninstallCodexMcpConfig(path);
+    removed = uninstallCodexMcpConfig(path, input.profileName);
   } else {
-    removed = uninstallJsonMcpConfig(path);
+    removed = uninstallJsonMcpConfig(path, input.profileName);
   }
 
   const after = configStatus(input.client, path, input.profileName);
@@ -204,10 +204,8 @@ function jsonMcpConfigContainsProfileCommand(contents: string, profileName: stri
 function configContainsProfileCommand(contents: string, profileName: string): boolean {
   return (
     containsHandoffPackageToken(contents) &&
-    contents.includes('server') &&
-    contents.includes('mcp') &&
-    contents.includes('--profile') &&
-    contents.includes(profileName) &&
+    containsHandoffMcpInvocation(contents) &&
+    containsProfileArgument(contents, profileName) &&
     contents.includes('--agent-approvals') &&
     !contents.includes('--explicit-auth')
   );
@@ -219,6 +217,30 @@ function profileMcpArgs(profileName: string): string[] {
 
 function containsHandoffPackageToken(contents: string): boolean {
   return /(^|[\s"',[])(handoff-relay)(?=$|[\s"',\]])/.test(contents);
+}
+
+function containsHandoffMcpInvocation(contents: string): boolean {
+  return contents.includes('server') && contents.includes('mcp');
+}
+
+function containsProfileArgument(contents: string, profileName: string): boolean {
+  return new RegExp(
+    `--profile(?:(?:["']?\\s*,\\s*["']?)|\\s+)${escapeRegExp(profileName)}(?=$|[\\s"',\\]])`,
+  ).test(contents);
+}
+
+function configCanBeRemovedForProfile(contents: string, profileName: string): boolean {
+  if (!containsHandoffPackageToken(contents) || !containsHandoffMcpInvocation(contents)) {
+    return false;
+  }
+  if (contents.includes('--profile')) {
+    return containsProfileArgument(contents, profileName);
+  }
+  return true;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function readJsonMcpConfig(path: string): Record<string, unknown> {
@@ -240,23 +262,23 @@ function readJsonMcpConfig(path: string): Record<string, unknown> {
   return {};
 }
 
-function uninstallCodexMcpConfig(path: string): boolean {
+function uninstallCodexMcpConfig(path: string, profileName: string): boolean {
   if (!existsSync(path)) return false;
   const existing = readFileSync(path, 'utf8');
   const section = codexHandoffTable(existing);
-  if (!section || !containsHandoffPackageToken(section)) return false;
+  if (!section || !configCanBeRemovedForProfile(section, profileName)) return false;
   writeFileSync(path, removeCodexHandoffTable(existing));
   return true;
 }
 
-function uninstallJsonMcpConfig(path: string): boolean {
+function uninstallJsonMcpConfig(path: string, profileName: string): boolean {
   if (!existsSync(path)) return false;
   const existing = readJsonObjectForRemoval(path);
   if (!existing) return false;
   const mcpServers = existing.mcpServers;
   if (!isRecord(mcpServers)) return false;
   const handoff = mcpServers.handoff;
-  if (!handoff || !containsHandoffPackageToken(JSON.stringify(handoff))) return false;
+  if (!handoff || !configCanBeRemovedForProfile(JSON.stringify(handoff), profileName)) return false;
   const nextMcpServers = { ...mcpServers };
   delete nextMcpServers.handoff;
   writeFileSync(path, `${JSON.stringify({ ...existing, mcpServers: nextMcpServers }, null, 2)}\n`);

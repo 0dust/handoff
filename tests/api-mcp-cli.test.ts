@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ import { registerServerCommands } from '../src/cli/server-commands.js';
 import { relayError } from '../src/errors.js';
 import {
   createMcpServer,
+  createProfileBackedMcpAuthContextProvider,
   createProfileBackedMcpBackend,
   getMcpToolDefinitions,
 } from '../src/mcp/server.js';
@@ -1641,6 +1642,53 @@ describe('MCP tool contracts', () => {
     const sent = await sendApprovedTool?.handler({ packetId: draft.id });
 
     expect(sent.packet.status).toBe('delivered');
+  });
+
+  test('profile-backed auth context resolution does not construct a local backend', () => {
+    const { service } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Auth Only MCP Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    service.close();
+
+    const home = mkdtempSync(join(tmpdir(), 'handoff-mcp-auth-only-'));
+    const dbPath = join(home, 'broken-relay.db');
+    const store = createProfileStore({ home });
+    const createdAt = new Date().toISOString();
+    writeFileSync(dbPath, 'not a sqlite database');
+    store.saveProfile({
+      schemaVersion: 1,
+      profileName: 'default',
+      workspaceId: workspace.workspace.id,
+      workspaceName: workspace.workspace.name,
+      memberId: workspace.admin.id,
+      handle: workspace.admin.handle,
+      displayName: workspace.admin.display_name,
+      role: workspace.admin.role,
+      serverUrl: 'local-db',
+      localDatabasePath: dbPath,
+      serverMode: 'local',
+      createdAt,
+      lastVerifiedAt: createdAt,
+    });
+    store.saveCredentials('default', {
+      memberToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      createdAt,
+    });
+
+    const provider = createProfileBackedMcpAuthContextProvider({
+      profileName: 'default',
+      profileStore: store,
+    });
+
+    expect(provider()).toEqual({
+      approvalSecret: workspace.admin.approval_secret,
+      authToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+    });
   });
 });
 

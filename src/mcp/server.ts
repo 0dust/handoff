@@ -20,7 +20,9 @@ import { createBackendForProfile } from '../setup/orchestrator.js';
 import {
   createProfileStore,
   resolveProfileName,
+  type HandoffCredentials,
   type HandoffEnv,
+  type HandoffProfile,
   type ProfileStore,
 } from '../setup/profile.js';
 import { createRelayDatabase } from '../storage/database.js';
@@ -528,7 +530,7 @@ export async function startMcpServer(input: {
   const server = createMcpServer(service, {
     agentApprovals: input.agentApprovals,
     authContext: profileContext
-      ? () => loadProfileBackedMcpContext(profileContext).authContext
+      ? createProfileBackedMcpAuthContextProvider(profileContext)
       : undefined,
     explicitAuth: input.explicitAuth || !profileContext,
   });
@@ -572,9 +574,31 @@ export function createProfileBackedMcpBackend(input: ProfileBackedMcpInput): Rel
   ) as RelayBackend;
 }
 
+export function createProfileBackedMcpAuthContextProvider(
+  input: ProfileBackedMcpInput,
+): () => McpAuthContext {
+  return () => loadProfileBackedAuthContext(input);
+}
+
 function loadProfileBackedMcpContext(input: ProfileBackedMcpInput): {
   authContext: McpAuthContext;
   backend: RelayBackend;
+} {
+  const { authContext, credentials, profile } = loadProfileBackedState(input);
+  return {
+    authContext,
+    backend: createBackendForProfile({ profile, credentials }),
+  };
+}
+
+function loadProfileBackedAuthContext(input: ProfileBackedMcpInput): McpAuthContext {
+  return loadProfileBackedState(input).authContext;
+}
+
+function loadProfileBackedState(input: ProfileBackedMcpInput): {
+  authContext: McpAuthContext;
+  credentials: HandoffCredentials;
+  profile: HandoffProfile;
 } {
   const profileName = resolveProfileName(input.profileName);
   const storedProfile = input.profileStore.loadProfile(profileName);
@@ -625,7 +649,8 @@ function loadProfileBackedMcpContext(input: ProfileBackedMcpInput): {
       authToken: credentials.memberToken,
       workspaceId: profile.workspaceId,
     },
-    backend: createBackendForProfile({ profile, credentials }),
+    credentials,
+    profile,
   };
 }
 

@@ -155,7 +155,7 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
           lan: options.lan ?? existingProfile?.serverMode === 'lan',
           port: options.port ? Number(options.port) : undefined,
           profileName,
-          publicUrl: options.publicUrl,
+          publicUrl: options.publicUrl ?? existingProfile?.publicInviteBaseUrl,
         });
         const notifications = await startSetupNotificationWatcher({
           profileName: result.profile.profileName,
