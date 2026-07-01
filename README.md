@@ -384,7 +384,7 @@ Full schema notes: [docs/packet-schema.md](docs/packet-schema.md).
 - Recipient acceptance and approval are required before ask/share packets hydrate.
 - Reply approval is required before recipient-agent output returns to the sender.
 - Clarification answers return the original packet to sender approval; they do not send automatically.
-- Strict mode requires manual approval tokens; optional agent-confirmed mode lets profile-backed MCP request those tokens after explicit user instruction.
+- Profile setup installs agent-confirmed approvals by default, so profile-backed MCP can request short-lived approval tokens after explicit user instruction. Strict mode remains available by omitting `--agent-approvals`.
 - Approval secrets are not exposed through MCP schemas or config.
 - Member tokens and approval secrets are stored outside profile metadata.
 - Secret-looking content blocks sending by default.
