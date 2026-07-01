@@ -137,6 +137,13 @@ export class ProfileStore {
     rmSync(this.credentialPath(profileName), { force: true });
   }
 
+  deleteProfileData(profileName: string): void {
+    rmSync(join(this.home, 'data', sanitizeProfileName(profileName)), {
+      force: true,
+      recursive: true,
+    });
+  }
+
   credentialPermissions(profileName: string): number | undefined {
     const path = this.credentialPath(profileName);
     if (!existsSync(path)) return undefined;

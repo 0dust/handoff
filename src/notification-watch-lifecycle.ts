@@ -83,6 +83,7 @@ export async function startBackgroundNotificationWatcher(
         ...process.env,
         ...(deps.env ?? {}),
         HANDOFF_HOME: input.home,
+        HANDOFF_WATCH_BACKGROUND: '1',
       },
       stdio: ['ignore', out, out],
     });

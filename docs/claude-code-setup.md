@@ -20,6 +20,20 @@ Alice does not run `start` for Sam's workspace. `join` accepts the invite, store
 
 Both `start` and `join` start packet notifications automatically. To opt out later, run `npx -y handoff-relay watch --stop`.
 
+To remove the Claude Code MCP entry without leaving the workspace, run:
+
+```bash
+npx -y handoff-relay uninstall-mcp --client claude
+```
+
+To leave the workspace and clean local profile, notification, and MCP state, run:
+
+```bash
+npx -y handoff-relay leave
+```
+
+If the workspace is unreachable and you only need local cleanup, run `npx -y handoff-relay delete-profile`.
+
 If Alice is not on the same network, host Handoff behind a reachable URL and use `start --public-url <url>` or the dedicated server path in [Local self-hosting](local-self-hosting.md).
 
 Handoff writes the user-scoped Claude Code MCP entry to `~/.claude.json`. `doctor` reports `WARN` until a supported MCP config contains the profile-backed command.
@@ -34,7 +48,7 @@ Add with the CLI:
 
 ```bash
 claude mcp add-json handoff \
-  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default"]}'
+  '{"type":"stdio","command":"npx","args":["-y","handoff-relay","server","mcp","--profile","default","--agent-approvals"]}'
 ```
 
 Or create `handoff.mcp.json`:
@@ -44,7 +58,7 @@ Or create `handoff.mcp.json`:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
     }
   }
 }
@@ -69,6 +83,8 @@ Draft with relay_share or relay_ask. Show me the packet summary, claims, evidenc
 If I approve, call relay_send_approved.
 ```
 
+The installed profile-backed MCP entry uses agent-confirmed approvals. After Claude shows you the packet, your explicit "send" or "hydrate" instruction lets it call `relay_send_approved` or `relay_hydrate_approved` without a pasted token.
+
 In strict mode, before Claude calls `relay_send_approved`, generate a human approval token in a terminal:
 
 ```bash
@@ -83,21 +99,17 @@ Call relay_review_next and show me the Relay Packet before hydration.
 If I approve, call relay_hydrate_approved.
 ```
 
-Hydration also needs a human approval token:
+Strict hydration also needs a human approval token:
 
 ```bash
 npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
-Approval-token minting is deliberately outside MCP so Claude cannot draft and approve a packet with only a member token. Keep approval secrets out of MCP config.
-
-For a smoother local workflow, profile-backed MCP can opt into agent-confirmed approvals:
+Strict approval-token minting is deliberately outside MCP so Claude cannot draft and approve a packet with only a member token. Keep approval secrets out of MCP config. To run strict mode manually, omit `--agent-approvals`:
 
 ```bash
-npx -y handoff-relay server mcp --profile default --agent-approvals
+npx -y handoff-relay server mcp --profile default
 ```
-
-With that flag, Claude may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Claude config and tool schemas.
 
 ## Remote Or Self-Hosted
 

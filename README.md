@@ -69,6 +69,7 @@ npx -y handoff-relay join <invite-link> --install-mcp codex
 ```
 
 To opt out of local packet notifications later, run `npx -y handoff-relay watch --stop`.
+To remove Handoff from a machine, run `npx -y handoff-relay leave` when the workspace is reachable, or `npx -y handoff-relay delete-profile` for local-only cleanup.
 
 After that, use Handoff inside the agent. The sender path is `relay_share` or `relay_ask` -> human review -> `relay_send_approved`. The recipient path is `relay_review_next` -> human review -> `relay_hydrate_approved`.
 
@@ -185,7 +186,7 @@ The MCP entry looks like:
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -212,7 +213,7 @@ The user-scoped Claude Code entry is written to `~/.claude.json` and looks like:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
     }
   }
 }
@@ -239,7 +240,7 @@ More detail: [docs/generic-mcp-setup.md](docs/generic-mcp-setup.md).
 Any MCP client that can launch a stdio command can use:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 Profile mode reads the active local Handoff profile. Agents do not need member tokens, workspace IDs, database paths, server URLs, or approval secrets in prompts or MCP schemas.
@@ -335,7 +336,9 @@ The fallback tools are still available for automation and compatibility. New age
 
 Handoff supports two approval modes.
 
-Strict mode is the default. Agents can draft and read handoff packets, but they cannot mint approval tokens.
+Profile setup uses agent-confirmed approvals by default. Your agent can call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you explicitly tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
+
+Strict mode is still available for manual or automation-heavy setups. Agents can draft and read handoff packets, but they cannot mint approval tokens.
 
 When your agent asks for a send, hydrate, or reply approval token, generate it in a local terminal:
 
@@ -347,13 +350,11 @@ npx -y handoff-relay approval-token <reply-packet-id> --action reply
 
 Paste the short-lived approval token back into the agent instruction. This is a human approval gate, not the handoff mechanism itself.
 
-Agent-confirmed mode is optional for profile-backed MCP sessions. Start MCP with `--agent-approvals`:
+To run strict mode manually, omit `--agent-approvals`:
 
 ```bash
-npx -y handoff-relay server mcp --profile default --agent-approvals
+npx -y handoff-relay server mcp --profile default
 ```
-
-In that mode, your agent may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you tell it to send, approve, or hydrate. The MCP process requests and consumes the same short-lived approval token through the configured Handoff backend. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API. Approval secrets stay out of MCP schemas and config.
 
 ## Packet Shape
 
@@ -416,7 +417,22 @@ Members can leave from their own machine:
 npx -y handoff-relay leave
 ```
 
-The command revokes the member server-side first, then removes the local profile and credentials. If it is interrupted after the server revoke, rerunning `leave` finishes local cleanup.
+The command revokes the member server-side first, then removes the local profile, credentials, notification watcher, and Handoff MCP entries from supported local clients. If it is interrupted after the server revoke, rerunning `leave` finishes local cleanup.
+
+If the workspace is gone or unreachable and you only need to clean the current machine, delete the local profile:
+
+```bash
+npx -y handoff-relay delete-profile
+```
+
+`delete-profile` is local-only; it does not revoke workspace membership. It also keeps the local relay database by default. Add `--delete-data` when you intentionally want to remove that local database too.
+
+To only remove Handoff from Codex, Claude Code, and Cursor MCP config without deleting the profile:
+
+```bash
+npx -y handoff-relay uninstall-mcp
+npx -y handoff-relay uninstall-mcp --client codex
+```
 
 Hosts/admins can remove a teammate by handle or member id:
 
@@ -435,9 +451,13 @@ Common operational commands:
 
 ```bash
 handoff start
+handoff stop
+handoff restart
 handoff invite
 handoff join
 handoff leave
+handoff delete-profile
+handoff uninstall-mcp
 handoff remove-member <handle-or-id>
 handoff doctor
 handoff server status

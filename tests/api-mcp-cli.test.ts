@@ -12,7 +12,11 @@ import { buildApiServer } from '../src/api/server.js';
 import { runCli } from '../src/cli.js';
 import { registerServerCommands } from '../src/cli/server-commands.js';
 import { relayError } from '../src/errors.js';
-import { createMcpServer, getMcpToolDefinitions } from '../src/mcp/server.js';
+import {
+  createMcpServer,
+  createProfileBackedMcpBackend,
+  getMcpToolDefinitions,
+} from '../src/mcp/server.js';
 import {
   inspectBackgroundNotificationWatcher,
   startBackgroundNotificationWatcher,
@@ -1569,6 +1573,75 @@ describe('MCP tool contracts', () => {
     expect(inboxTool?.inputSchema.workspaceId).toBeUndefined();
     await expect(inboxTool?.handler({})).resolves.toEqual([]);
   });
+
+  test('profile-backed MCP reloads profile backend details on each tool call', async () => {
+    const { service, dbPath } = createService();
+    const workspace = service.createWorkspace({
+      name: 'Reloaded MCP Team',
+      adminHandle: 'sam',
+      adminName: 'Sam',
+    });
+    const invite = service.inviteMember({
+      adminToken: workspace.admin.token,
+      workspaceId: workspace.workspace.id,
+      handle: 'alice',
+    });
+    service.acceptInvite({ inviteToken: invite.invite.token, displayName: 'Alice' });
+    service.close();
+
+    const home = mkdtempSync(join(tmpdir(), 'handoff-mcp-reload-'));
+    const store = createProfileStore({ home });
+    const createdAt = new Date().toISOString();
+    const profile = {
+      schemaVersion: 1 as const,
+      profileName: 'default',
+      workspaceId: workspace.workspace.id,
+      workspaceName: workspace.workspace.name,
+      memberId: workspace.admin.id,
+      handle: workspace.admin.handle,
+      displayName: workspace.admin.display_name,
+      role: workspace.admin.role,
+      serverUrl: 'http://127.0.0.1:1',
+      serverMode: 'remote' as const,
+      createdAt,
+      lastVerifiedAt: createdAt,
+    };
+    store.saveProfile(profile);
+    store.saveCredentials('default', {
+      memberToken: workspace.admin.token,
+      approvalSecret: workspace.admin.approval_secret,
+      createdAt,
+    });
+
+    const backend = createProfileBackedMcpBackend({
+      profileName: 'default',
+      profileStore: store,
+    });
+    const tools = getMcpToolDefinitions(backend, {
+      agentApprovals: true,
+      profileName: 'default',
+      profileStore: store,
+    });
+    store.saveProfile({
+      ...profile,
+      localDatabasePath: dbPath,
+      serverMode: 'local',
+      serverUrl: 'local-db',
+    });
+    const shareTool = tools.find((tool) => tool.name === 'relay_share');
+    const sendApprovedTool = tools.find((tool) => tool.name === 'relay_send_approved');
+
+    const draft = await shareTool?.handler({
+      to: '@alice',
+      finding: 'Profile-backed MCP should use the corrected server URL immediately.',
+      title: 'Reloaded profile',
+      summary: 'A running MCP process should not keep using a stale endpoint.',
+      sourceClient: 'codex',
+    });
+    const sent = await sendApprovedTool?.handler({ packetId: draft.id });
+
+    expect(sent.packet.status).toBe('delivered');
+  });
 });
 
 describe('CLI and watcher', () => {
@@ -2107,6 +2180,7 @@ describe('CLI and watcher', () => {
       '5000',
     ]);
     expect(spawned[0].options.env.HANDOFF_HOME).toBe(home);
+    expect(spawned[0].options.env.HANDOFF_WATCH_BACKGROUND).toBe('1');
     expect(first.metadata).toMatchObject({
       desktopNotifications: true,
       intervalMs: 5000,
@@ -2240,6 +2314,39 @@ describe('CLI and watcher', () => {
       action: 'open/review',
     });
     expect(JSON.stringify(webhookDeliveries[0].body)).not.toContain('sk-should-not-exist');
+  });
+
+  test('notification dispatcher can require a visible out-of-band delivery', async () => {
+    const terminal: string[] = [];
+    const errors: string[] = [];
+    const dispatcher = createNotificationDispatcher({
+      writeTerminal: (message) => terminal.push(message),
+      desktop: true,
+      platform: 'darwin',
+      requireOutOfBandDelivery: true,
+      runNativeNotification: async () => {
+        throw new Error('native notifications unavailable');
+      },
+      onError: (error, channel) => {
+        errors.push(`${channel}: ${error.message}`);
+      },
+    });
+
+    await expect(
+      dispatcher('@sam shared context on Auth refresh in project-api. Review packet?', {
+        packet_id: 'pkt_1',
+        packet_type: 'share',
+        title: 'Auth refresh',
+        summary: 'Refresh returns 401.',
+        sender_handle: 'sam',
+        project: 'project-api',
+      }),
+    ).rejects.toThrow(/No out-of-band notification delivery succeeded/);
+
+    expect(terminal).toEqual([
+      '@sam shared context on Auth refresh in project-api. Review packet?',
+    ]);
+    expect(errors).toEqual(['desktop: native notifications unavailable']);
   });
 
   test('watch command posts newly delivered packet summaries to a webhook adapter', async () => {

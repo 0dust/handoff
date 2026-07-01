@@ -26,6 +26,7 @@ export interface NotificationDispatcherOptions {
   webhookHeaders?: Record<string, string>;
   fetchImpl?: typeof fetch;
   platform?: NodeJS.Platform;
+  requireOutOfBandDelivery?: boolean;
   runNativeNotification?: NativeNotificationRunner;
   onError?: (error: Error, channel: 'desktop' | 'webhook') => void;
 }
@@ -49,21 +50,43 @@ export function createNotificationDispatcher(input: NotificationDispatcherOption
   return async (message: string, summary: NotificationSummary): Promise<void> => {
     input.writeTerminal?.(message, summary);
     const deliveries: Array<Promise<void>> = [];
+    const failures: string[] = [];
+    let outOfBandDelivered = false;
     if (input.desktop) {
       deliveries.push(
-        sendDesktopNotification(summary, input).catch((error: unknown) => {
-          input.onError?.(toError(error), 'desktop');
-        }),
+        sendDesktopNotification(summary, input)
+          .then(() => {
+            outOfBandDelivered = true;
+          })
+          .catch((error: unknown) => {
+            const normalized = toError(error);
+            failures.push(`desktop: ${normalized.message}`);
+            input.onError?.(normalized, 'desktop');
+          }),
       );
     }
     if (input.webhookUrl) {
       deliveries.push(
-        sendWebhookNotification(summary, input).catch((error: unknown) => {
-          input.onError?.(toError(error), 'webhook');
-        }),
+        sendWebhookNotification(summary, input)
+          .then(() => {
+            outOfBandDelivered = true;
+          })
+          .catch((error: unknown) => {
+            const normalized = toError(error);
+            failures.push(`webhook: ${normalized.message}`);
+            input.onError?.(normalized, 'webhook');
+          }),
       );
     }
     await Promise.all(deliveries);
+    if (
+      input.requireOutOfBandDelivery &&
+      (input.desktop || input.webhookUrl) &&
+      !outOfBandDelivered
+    ) {
+      const details = failures.length ? ` ${failures.join('; ')}` : '';
+      throw new Error(`No out-of-band notification delivery succeeded.${details}`);
+    }
   };
 }
 

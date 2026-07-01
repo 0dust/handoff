@@ -38,7 +38,11 @@ import {
   writeServerMetadata,
   type ServerMetadata,
 } from '../src/setup/lifecycle.js';
-import { detectMcpConfigs, installMcpConfig } from '../src/setup/mcp-config.js';
+import {
+  detectMcpConfigs,
+  installMcpConfig,
+  uninstallMcpConfigs,
+} from '../src/setup/mcp-config.js';
 import { createProfileStore } from '../src/setup/profile.js';
 import { RelayService } from '../src/service/relay-service.js';
 import { createRelayDatabase } from '../src/storage/database.js';
@@ -525,6 +529,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         'mcp',
         '--profile',
         'default',
+        '--agent-approvals',
       ]);
     } finally {
       if (previousHome === undefined) delete process.env.HANDOFF_HOME;
@@ -600,6 +605,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       'mcp',
       '--profile',
       'default',
+      '--agent-approvals',
     ]);
   });
 
@@ -712,6 +718,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       invite: invite.inviteLink,
       displayName: 'Alice Recipient',
     });
+    installMcpConfig({ client: 'codex', env: { HOME: aliceHome }, profileName: 'default' });
 
     const previousHome = process.env.HOME;
     const previousHandoffHome = process.env.HANDOFF_HOME;
@@ -729,6 +736,9 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(second.stdout).toContain('No active Handoff profile');
       expect(aliceStore.loadProfile('default')).toBeUndefined();
       expect(aliceStore.credentialsExist('default')).toBe(false);
+      expect(detectMcpConfigs({ env: { HOME: aliceHome }, profileName: 'default' })).toContainEqual(
+        expect.objectContaining({ client: 'codex', installed: false }),
+      );
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -882,7 +892,9 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         intervalMs: 5000,
         profileName: 'default',
       });
-      expect(result.stdout).toContain('Command: npx -y handoff-relay server mcp --profile default');
+      expect(result.stdout).toContain(
+        'Command: npx -y handoff-relay server mcp --profile default --agent-approvals',
+      );
       expect(result.stdout).toContain('Notifications: started in the background.');
       expect(result.stdout).toContain('handoff-relay watch --profile default --stop');
       expect(result.stdout).not.toContain('watch --profile default --background');
@@ -993,7 +1005,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       [
         '[mcp_servers.handoff]',
         'command = "npx"',
-        'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]',
+        'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]',
       ].join('\n'),
     );
 
@@ -1706,6 +1718,151 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI stop is a discoverable alias for the recorded background server stop', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const result = await runCli(['stop', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.status).toBe('not_found');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
+  test('CLI restart reuses the profile mode and starts notifications', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      await startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'sam' },
+        lan: true,
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+
+      const { result, watcherCalls } = await runCliWithImplicitWatcher(['restart', '--json']);
+      const parsed = JSON.parse(result.stdout);
+      const store = createProfileStore({ home });
+
+      expect(result.code).toBe(0);
+      expect(parsed.stopped.status).toBe('not_found');
+      expect(parsed.serverStatus).toBe('skipped');
+      expect(parsed.notifications.status).toBe('started');
+      expect(watcherCalls).toHaveLength(1);
+      expect(store.loadProfile('default')?.serverMode).toBe('lan');
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
+  test('CLI uninstall-mcp removes the selected client and preserves other clients', async () => {
+    const home = tempHome();
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      installMcpConfig({ client: 'codex', env: { HOME: home }, profileName: 'default' });
+      installMcpConfig({ client: 'claude-code', env: { HOME: home }, profileName: 'default' });
+
+      const result = await runCli(['uninstall-mcp', '--client', 'claude', '--json']);
+      const parsed = JSON.parse(result.stdout);
+      const statuses = detectMcpConfigs({ env: { HOME: home }, profileName: 'default' });
+
+      expect(result.code).toBe(0);
+      expect(parsed.status).toBe('removed');
+      expect(parsed.configs).toContainEqual(
+        expect.objectContaining({ client: 'claude-code', removed: true }),
+      );
+      expect(statuses).toContainEqual(
+        expect.objectContaining({ client: 'codex', installed: true }),
+      );
+      expect(statuses).toContainEqual(
+        expect.objectContaining({ client: 'claude-code', installed: false }),
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previous;
+      }
+    }
+  });
+
+  test('CLI delete-profile removes local credentials and MCP config but keeps data by default', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      installMcpConfig({ client: 'codex', env: { HOME: home }, profileName: 'default' });
+
+      const result = await runCli(['delete-profile', '--json']);
+      const parsed = JSON.parse(result.stdout);
+      const store = createProfileStore({ home });
+
+      expect(result.code).toBe(0);
+      expect(parsed.hadProfile).toBe(true);
+      expect(parsed.cleanup.notifications.status).toBe('not_found');
+      expect(parsed.cleanup.mcp.status).toBe('removed');
+      expect(store.loadProfile('default')).toBeUndefined();
+      expect(store.credentialsExist('default')).toBe(false);
+      expect(existsSync(started.profile.localDatabasePath!)).toBe(true);
+      expect(detectMcpConfigs({ env: { HOME: home }, profileName: 'default' })).toContainEqual(
+        expect.objectContaining({ client: 'codex', installed: false }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('CLI delete-profile --delete-data removes the local relay database', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+
+      const result = await runCli(['delete-profile', '--delete-data', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.dataDeleted).toBe(true);
+      expect(parsed.localDatabasePath).toBe(started.profile.localDatabasePath);
+      expect(existsSync(started.profile.localDatabasePath!)).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
   test('CLI start succeeds and reports when automatic notifications cannot start', async () => {
     const home = tempHome();
     const previous = process.env.HANDOFF_HOME;
@@ -1831,7 +1988,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       );
       expect(config.mcpServers.handoff).toEqual({
         command: 'npx',
-        args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+        args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default', '--agent-approvals'],
       });
     } finally {
       delete process.env.HANDOFF_TEST_SKIP_SERVER;
@@ -1872,7 +2029,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(status.installed).toBe(true);
     expect(config.match(/^\[mcp_servers\.handoff\]$/gm)).toHaveLength(1);
     expect(config).toContain(
-      'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]',
+      'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]',
     );
     expect(config).not.toContain('--explicit-auth');
     expect(config).toContain('[mcp_servers.other]');
@@ -1914,7 +2071,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(config.mcpServers.github).toEqual({ command: 'gh', args: ['mcp', 'server'] });
     expect(config.mcpServers.handoff).toEqual({
       command: 'npx',
-      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default', '--agent-approvals'],
     });
   });
 
@@ -1941,7 +2098,7 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(readFileSync(`${configPath}.handoff-backup`, 'utf8')).toBe(malformed);
     expect(config.mcpServers.handoff).toEqual({
       command: 'npx',
-      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+      args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default', '--agent-approvals'],
     });
   });
 
@@ -1971,7 +2128,15 @@ describe('invite, join, LAN, and doctor setup flows', () => {
           mcpServers: {
             handoff: {
               command: 'npx',
-              args: ['-y', 'handoff-relay', 'server', 'mcp', '--profile', 'default'],
+              args: [
+                '-y',
+                'handoff-relay',
+                'server',
+                'mcp',
+                '--profile',
+                'default',
+                '--agent-approvals',
+              ],
             },
             legacy: {
               command: 'npx',
@@ -1995,6 +2160,100 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     expect(statuses).toContainEqual(expect.objectContaining({ client: 'cursor', installed: true }));
     expect(statuses).toContainEqual(
       expect.objectContaining({ client: 'claude-code', installed: true }),
+    );
+  });
+
+  test('MCP uninstall removes only Handoff-owned entries and preserves user config', () => {
+    const home = tempHome();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(
+      join(home, '.codex', 'config.toml'),
+      [
+        '[workspace]',
+        'trusted = true',
+        '',
+        '[mcp_servers.handoff]',
+        'command = "npx"',
+        'args = ["-y", "handoff-relay", "server", "mcp", "--explicit-auth"]',
+        'startup_timeout_sec = 10',
+        '',
+        '[mcp_servers.github]',
+        'command = "gh"',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(home, '.claude.json'),
+      `${JSON.stringify(
+        {
+          theme: 'dark',
+          mcpServers: {
+            handoff: {
+              command: 'npx',
+              args: [
+                '-y',
+                'handoff-relay',
+                'server',
+                'mcp',
+                '--profile',
+                'default',
+                '--agent-approvals',
+              ],
+            },
+            github: {
+              command: 'gh',
+              args: ['mcp', 'server'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(home, '.cursor', 'mcp.json'),
+      `${JSON.stringify(
+        {
+          mcpServers: {
+            handoff: {
+              command: 'other-tool',
+              args: ['server'],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = uninstallMcpConfigs({ env: { HOME: home }, profileName: 'default' });
+    const codexConfig = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
+    const claudeConfig = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+    const cursorConfig = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8'));
+
+    expect(result.status).toBe('removed');
+    expect(result.configs).toContainEqual(
+      expect.objectContaining({ client: 'codex', removed: true }),
+    );
+    expect(result.configs).toContainEqual(
+      expect.objectContaining({ client: 'claude-code', removed: true }),
+    );
+    expect(result.configs).toContainEqual(
+      expect.objectContaining({ client: 'cursor', removed: false }),
+    );
+    expect(codexConfig).not.toContain('[mcp_servers.handoff]');
+    expect(codexConfig).toContain('[workspace]');
+    expect(codexConfig).toContain('[mcp_servers.github]');
+    expect(claudeConfig.theme).toBe('dark');
+    expect(claudeConfig.mcpServers.handoff).toBeUndefined();
+    expect(claudeConfig.mcpServers.github).toEqual({ command: 'gh', args: ['mcp', 'server'] });
+    expect(cursorConfig.mcpServers.handoff).toEqual({ command: 'other-tool', args: ['server'] });
+    expect(detectMcpConfigs({ env: { HOME: home }, profileName: 'default' })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ client: 'codex', installed: false }),
+        expect.objectContaining({ client: 'claude-code', installed: false }),
+        expect.objectContaining({ client: 'cursor', installed: false }),
+      ]),
     );
   });
 

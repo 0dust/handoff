@@ -43,7 +43,16 @@ Use the same `HANDOFF_WORKSPACE_BOOTSTRAP_TOKEN` only in the terminal that runs 
 
 The self-hosted server is a Handoff coordination server for Relay Packets, profiles, approvals, and audit receipts. Do not expose it or document it as a public A2A service. Any A2A adapter layer is internal infrastructure behind the Handoff API and stays on the same private/self-hosted trust boundary.
 
-For local profile-managed servers started by `handoff start`, inspect or stop the recorded background process:
+For local profile-managed servers started by `handoff start`, use the top-level lifecycle commands:
+
+```bash
+npx -y handoff-relay stop
+npx -y handoff-relay restart
+```
+
+`restart` preserves the profile's previous LAN/local mode unless you pass new host options such as `--lan`, `--host`, `--port`, or `--public-url`.
+
+For lower-level inspection or automation, the recorded background server is also available under `server`:
 
 ```bash
 npx -y handoff-relay server status
@@ -73,7 +82,20 @@ npx -y handoff-relay join http://10.0.0.10:3737/invite/<invite-token> --install-
 Their MCP command stays profile-backed:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+npx -y handoff-relay server mcp --profile default --agent-approvals
+```
+
+If a teammate needs to remove Handoff from their machine, they can run:
+
+```bash
+npx -y handoff-relay leave
+```
+
+If the workspace is unreachable and they only need local cleanup, they can run:
+
+```bash
+npx -y handoff-relay delete-profile
+npx -y handoff-relay uninstall-mcp
 ```
 
 ## Explicit Server-Backed Commands
@@ -114,13 +136,13 @@ npx -y handoff-relay approval-token <packet-id> --action send
 npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
-Profile-backed MCP can opt into agent-confirmed approvals:
+Profile-backed MCP uses agent-confirmed approvals for normal setup:
 
 ```bash
 npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
-In that mode, the MCP process requests and consumes the same short-lived approval tokens through the configured Handoff backend after the agent shows the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote/self-hosted profiles use the configured Handoff server API.
+In this mode, the MCP process requests and consumes the same short-lived approval tokens through the configured Handoff backend after the agent shows the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote/self-hosted profiles use the configured Handoff server API.
 
 Explicit approval-token mode remains available:
 

@@ -20,6 +20,20 @@ Alice does not run `start` for Sam's workspace. `join` accepts the invite, store
 
 Both `start` and `join` start packet notifications automatically. To opt out later, run `npx -y handoff-relay watch --stop`.
 
+To remove the Codex MCP entry without leaving the workspace, run:
+
+```bash
+npx -y handoff-relay uninstall-mcp --client codex
+```
+
+To leave the workspace and clean local profile, notification, and MCP state, run:
+
+```bash
+npx -y handoff-relay leave
+```
+
+If the workspace is unreachable and you only need local cleanup, run `npx -y handoff-relay delete-profile`.
+
 If Alice is not on the same network, host Handoff behind a reachable URL and use `start --public-url <url>` or the dedicated server path in [Local self-hosting](local-self-hosting.md).
 
 ## Local Demo Setup
@@ -39,7 +53,7 @@ If you did not use `--install-mcp codex`, add this TOML:
 ```toml
 [mcp_servers.handoff]
 command = "npx"
-args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -66,7 +80,9 @@ Call relay_review_next and show me the Relay Packet and redaction report before 
 If I approve, call relay_hydrate_approved.
 ```
 
-Strict approval tokens are generated outside MCP:
+The installed profile-backed MCP entry uses agent-confirmed approvals. After Codex shows you the packet, your explicit "send" or "hydrate" instruction lets it call `relay_send_approved` or `relay_hydrate_approved` without a pasted token. Approval secrets stay out of Codex config and tool schemas.
+
+Strict approval tokens remain available when you intentionally run MCP without `--agent-approvals`:
 
 ```bash
 npx -y handoff-relay approval-token <packet-id> --action send
@@ -74,19 +90,6 @@ npx -y handoff-relay approval-token <packet-id> --action hydrate
 ```
 
 The command uses your active Handoff profile and asks for a local confirmation phrase. Do not put approval secrets in Codex config.
-
-For a smoother local workflow, profile-backed MCP can opt into agent-confirmed approvals:
-
-```toml
-[mcp_servers.handoff]
-command = "npx"
-args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
-startup_timeout_sec = 10
-tool_timeout_sec = 60
-enabled = true
-```
-
-With that flag, Codex may call `relay_send_approved` or `relay_hydrate_approved` without a pasted token after it shows you the packet and you explicitly tell it to send or hydrate. The MCP process requests the short-lived approval token through the configured Handoff backend; local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process, and remote profiles use the configured server API. Approval secrets still stay out of Codex config and tool schemas.
 
 ## Remote Or Self-Hosted
 

@@ -27,6 +27,40 @@ Plain `start` is only the right recovery path for local demos, CI smoke tests, o
 
 Packet notifications start automatically after `start` or `join`. Use `npx -y handoff-relay watch --status` to check them or `npx -y handoff-relay watch --stop` to opt out.
 
+## Stop, Restart, Or Clean Up
+
+For a profile-managed server started by `start`, use:
+
+```bash
+npx -y handoff-relay stop
+npx -y handoff-relay restart
+```
+
+`restart` keeps the profile's previous LAN/local mode unless you pass new host options such as `--lan`, `--host`, `--port`, or `--public-url`.
+
+To remove Handoff MCP entries from supported local clients without deleting the profile:
+
+```bash
+npx -y handoff-relay uninstall-mcp
+npx -y handoff-relay uninstall-mcp --client codex
+npx -y handoff-relay uninstall-mcp --client claude
+npx -y handoff-relay uninstall-mcp --client cursor
+```
+
+To leave a reachable workspace, revoke membership, and clean local profile, watcher, and MCP state:
+
+```bash
+npx -y handoff-relay leave
+```
+
+If the workspace is gone or unreachable and you only need to clean this machine:
+
+```bash
+npx -y handoff-relay delete-profile
+```
+
+`delete-profile` is local-only; it does not revoke workspace membership. It keeps the local relay database by default. Add `--delete-data` only when you intentionally want that local database removed too.
+
 If `doctor` reports `WARN` for `mcp_config`, add Handoff to your MCP client. For Codex, Claude Code, or Cursor, Handoff can write the common user config while hosting or joining:
 
 ```bash
@@ -41,7 +75,7 @@ npx -y handoff-relay join <invite-link> --install-mcp cursor
 For another MCP client, add the printed profile-backed command:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 If a teammate cannot join from another machine, restart the host in LAN mode and send a fresh invite:
@@ -70,12 +104,12 @@ This package includes `pnpm-workspace.yaml` with `onlyBuiltDependencies` for `be
 - Run the command directly:
 
   ```bash
-  npx -y handoff-relay server mcp --profile default
+  npx -y handoff-relay server mcp --profile default --agent-approvals
   ```
 
 - In Claude Code, check `/mcp` or start with `--mcp-config`.
 - In Codex, confirm the trusted `config.toml` has the expected `mcp_servers.<id>.command` and `args`.
-- Confirm the MCP args use `--profile default` unless you intentionally need `--explicit-auth`.
+- Confirm the MCP args use `--profile default --agent-approvals` unless you intentionally need strict manual-token mode or `--explicit-auth`.
 
 ## Redaction Blocks A Packet
 

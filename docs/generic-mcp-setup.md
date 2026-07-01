@@ -31,6 +31,21 @@ npx -y handoff-relay join <invite-link> --install-mcp claude
 npx -y handoff-relay join <invite-link> --install-mcp cursor
 ```
 
+To reverse those supported-client config edits without leaving the workspace:
+
+```bash
+npx -y handoff-relay uninstall-mcp
+npx -y handoff-relay uninstall-mcp --client cursor
+```
+
+To leave the workspace and clean local profile, notification, and supported MCP config state:
+
+```bash
+npx -y handoff-relay leave
+```
+
+If the workspace is unreachable and you only need local cleanup, run `npx -y handoff-relay delete-profile`.
+
 For other MCP clients, use the printed profile-backed command. `doctor` reports `WARN` until it detects a supported Codex, Claude Code, or Cursor config that already includes Handoff profile mode.
 
 For same-machine demos or CI smoke tests, plain `start` remains available, but its invite links are loopback-only.
@@ -44,7 +59,7 @@ Use profile mode for normal agent sessions:
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
     }
   }
 }
@@ -52,20 +67,7 @@ Use profile mode for normal agent sessions:
 
 In this mode, Handoff injects the member token and workspace ID from the local profile. Normal MCP tool schemas omit `authToken` and `workspaceId`. Approval secrets are never exposed through MCP.
 
-Strict approval remains the default. If you want the local agent session to treat your explicit chat instruction as approval, add `--agent-approvals`:
-
-```json
-{
-  "mcpServers": {
-    "handoff": {
-      "command": "npx",
-      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
-    }
-  }
-}
-```
-
-With that flag, the MCP process requests and consumes short-lived approval tokens through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
+Profile setup uses agent-confirmed approvals by default. The MCP process requests and consumes short-lived approval tokens through the configured Handoff backend after the agent shows you the packet and you explicitly tell it to send, approve, or hydrate. Local/LAN profiles with a running server URL use that local Handoff API instead of writing SQLite directly from the agent process; remote profiles use the configured Handoff server API.
 
 ## Cursor
 
@@ -81,7 +83,7 @@ npx -y handoff-relay join <invite-link> --install-mcp cursor
   "mcpServers": {
     "handoff": {
       "command": "npx",
-      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]
+      "args": ["-y", "handoff-relay", "server", "mcp", "--profile", "default", "--agent-approvals"]
     }
   }
 }
@@ -105,7 +107,7 @@ npx -y handoff-relay start --lan --invite alice
 For remote/self-hosted setups, users should `join` an invite link from that server. The saved profile records the remote server URL, so the MCP command stays the same:
 
 ```bash
-npx -y handoff-relay server mcp --profile default
+npx -y handoff-relay server mcp --profile default --agent-approvals
 ```
 
 ## Explicit-Auth Compatibility

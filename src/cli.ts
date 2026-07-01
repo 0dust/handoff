@@ -926,6 +926,9 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
         desktop: options.desktopNotifications !== false,
         webhookUrl: options.webhookUrl,
         webhookHeaders: parseWebhookHeaders(options.webhookHeader),
+        requireOutOfBandDelivery:
+          process.env.HANDOFF_WATCH_BACKGROUND === '1' &&
+          (options.desktopNotifications !== false || Boolean(options.webhookUrl)),
         onError: (error, channel) => {
           io.writeErr(`[handoff] ${channel} notification failed: ${error.message}\n`);
         },

@@ -83,6 +83,17 @@ export interface LeaveWorkspaceProfileResult {
   workspaceName?: string;
 }
 
+export interface DeleteLocalProfileResult {
+  dataDeleted: boolean;
+  hadCredentials: boolean;
+  hadPendingJoinAttempt: boolean;
+  hadProfile: boolean;
+  handle?: string;
+  localDatabasePath?: string;
+  profileName: string;
+  workspaceName?: string;
+}
+
 export interface RemoveWorkspaceMemberResult {
   alreadyRemoved: boolean;
   handle: string;
@@ -442,6 +453,45 @@ export async function leaveWorkspaceProfile(
     handle: profile.handle,
     profileName: profile.profileName,
     workspaceName: profile.workspaceName,
+  };
+}
+
+export function deleteLocalProfile(
+  input: {
+    deleteData?: boolean;
+    env?: HandoffEnv;
+    home?: string;
+    profileName?: string;
+  } = {},
+): DeleteLocalProfileResult {
+  const env = input.env ?? process.env;
+  const store = createProfileStore({ env, home: input.home });
+  const profileName = resolveProfileName(input.profileName, env);
+  const profile = store.loadProfile(profileName);
+  const localDatabasePath =
+    profile?.localDatabasePath ??
+    (input.deleteData ? store.localDatabasePath(profileName) : undefined);
+  const hadCredentials = store.credentialsExist(profileName);
+  const hadPendingJoinAttempt = Boolean(store.loadPendingJoinAttempt(profileName));
+
+  store.deleteProfile(profileName);
+  store.deletePendingJoinAttempt(profileName);
+
+  let dataDeleted = false;
+  if (input.deleteData && localDatabasePath) {
+    store.deleteProfileData(profileName);
+    dataDeleted = true;
+  }
+
+  return {
+    dataDeleted,
+    hadCredentials,
+    hadPendingJoinAttempt,
+    hadProfile: Boolean(profile),
+    handle: profile?.handle,
+    localDatabasePath,
+    profileName,
+    workspaceName: profile?.workspaceName,
   };
 }
 
