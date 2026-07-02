@@ -145,6 +145,7 @@ export async function sendWebhookNotification(
 
 export function createPollingWatcher(input: {
   ack?: (summary: NotificationSummary) => void | Promise<void>;
+  onError?: (error: Error) => void;
   poll: () => NotificationSummary[] | Promise<NotificationSummary[]>;
   notify: (message: string, summary: NotificationSummary) => void | Promise<void>;
   intervalMs?: number;
@@ -167,7 +168,9 @@ export function createPollingWatcher(input: {
     start() {
       if (timer) return;
       timer = setInterval(() => {
-        void tick();
+        void tick().catch((error: unknown) => {
+          input.onError?.(toError(error));
+        });
       }, input.intervalMs ?? 5000);
     },
     stop() {

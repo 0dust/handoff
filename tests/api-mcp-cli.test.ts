@@ -90,6 +90,15 @@ async function startWebhookServer() {
   };
 }
 
+async function waitForCondition(check: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for condition.');
+}
+
 describe('coordination API', () => {
   test('runtime surfaces report the package version from a shared constant', async () => {
     const { runtimeVersion } = await import('../src/runtime/version.js');
@@ -2136,6 +2145,54 @@ describe('CLI and watcher', () => {
     await expect(watcher.tick()).rejects.toThrow(/desktop notification failed/);
     await watcher.tick();
 
+    expect(attempts).toBe(2);
+    expect(acked).toBe(1);
+    expect(notifications).toEqual([
+      '@sam is asking for help on Auth refresh in project-api. Review packet?',
+    ]);
+  });
+
+  test('polling watcher interval reports delivery failures and keeps retrying before ack', async () => {
+    const notifications: string[] = [];
+    const errors: string[] = [];
+    let attempts = 0;
+    let acked = 0;
+    const watcher = createPollingWatcher({
+      poll: () => [
+        {
+          notification_id: 'ntf_1',
+          packet_id: 'pkt_1',
+          packet_type: 'ask',
+          title: 'Auth refresh',
+          summary: 'Refresh returns 401.',
+          sender_handle: 'sam',
+          project: 'project-api',
+        },
+      ],
+      notify: (message) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('desktop notification failed');
+        }
+        notifications.push(message);
+      },
+      ack: () => {
+        acked += 1;
+      },
+      intervalMs: 5,
+      onError: (error) => {
+        errors.push(error.message);
+      },
+    });
+
+    try {
+      watcher.start();
+      await waitForCondition(() => attempts >= 2 && acked === 1);
+    } finally {
+      watcher.stop();
+    }
+
+    expect(errors).toEqual(['desktop notification failed']);
     expect(attempts).toBe(2);
     expect(acked).toBe(1);
     expect(notifications).toEqual([

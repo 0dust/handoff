@@ -1894,6 +1894,80 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI delete-profile --delete-data stops the matching recorded local server first', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    let child: ChildProcess | undefined;
+    try {
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      const dbPath = started.profile.localDatabasePath!;
+      const server = await spawnFakeHandoffServer('srv_delete_profile_test', {
+        databaseId: databaseIdForPath(dbPath),
+      });
+      child = server.child;
+      if (!child.pid) {
+        throw new Error('Expected child pid');
+      }
+      writeServerMetadataFixture(home, {
+        dbPath,
+        pid: child.pid,
+        port: server.port,
+        serverId: server.serverId,
+        serverUrl: server.serverUrl,
+      });
+
+      const result = await runCli(['delete-profile', '--delete-data', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.cleanup.server).toMatchObject({
+        pid: child.pid,
+        status: 'stopped',
+      });
+      expect(parsed.dataDeleted).toBe(true);
+      expect(readServerMetadata(home)).toBeUndefined();
+      expect(existsSync(dbPath)).toBe(false);
+      expect(await pidHasExited(child.pid)).toBe(true);
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (child) await killChildAndWait(child);
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('CLI delete-profile --delete-data reports dataDeleted false when no local data existed', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const result = await runCli(['delete-profile', '--delete-data', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.hadProfile).toBe(false);
+      expect(parsed.dataDeleted).toBe(false);
+      expect(parsed.cleanup.server.status).toBe('not_found');
+      expect(existsSync(join(home, 'data', 'default'))).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
   test('CLI start succeeds and reports when automatic notifications cannot start', async () => {
     const home = tempHome();
     const previous = process.env.HANDOFF_HOME;

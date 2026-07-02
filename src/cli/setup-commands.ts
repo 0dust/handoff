@@ -1,3 +1,5 @@
+import { resolve as resolvePath } from 'node:path';
+
 import type { Command } from 'commander';
 
 import { formatServerStopHuman } from './server-commands.js';
@@ -7,7 +9,11 @@ import {
   stopBackgroundNotificationWatcher,
   type BackgroundNotificationWatcherMetadata,
 } from '../notification-watch-lifecycle.js';
-import { stopRecordedServer, type StopRecordedServerResult } from '../setup/lifecycle.js';
+import {
+  readServerMetadata,
+  stopRecordedServer,
+  type StopRecordedServerResult,
+} from '../setup/lifecycle.js';
 import {
   uninstallMcpConfigs,
   type McpClientId,
@@ -45,7 +51,17 @@ interface ProfileRuntimeCleanupResult {
   mcp?: McpUninstallSummary;
   notifications: NotificationWatcherStopResult;
   profileName: string;
+  server?: ProfileServerCleanupResult;
 }
+
+type ProfileServerCleanupResult =
+  | StopRecordedServerResult
+  | {
+      dbPath?: string;
+      recordedDbPath?: string;
+      serverUrl?: string;
+      status: 'not_matching';
+    };
 
 export function registerSetupCommands(program: Command, input: SetupCommandOptions): void {
   const { io, startNotificationWatcher = startBackgroundNotificationWatcher } = input;
@@ -257,10 +273,21 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
         },
       ) => {
         const profileName = resolveProfileName(options.profile);
+        const store = createProfileStore();
+        const profile = store.loadProfile(profileName);
         const cleanup = await cleanupProfileRuntime({
           keepMcp: options.keepMcp,
+          stopServerForDatabasePath: options.deleteData
+            ? (profile?.localDatabasePath ?? store.localDatabasePath(profileName))
+            : undefined,
           profileName,
         });
+        if (options.deleteData && cleanup.server?.status === 'still_running') {
+          const pid = cleanup.server.pid ?? 'unknown';
+          throw new Error(
+            `Recorded Handoff server for profile "${profileName}" is still running after SIGTERM (pid ${pid}); local data was not deleted. Stop it with \`npx -y handoff-relay stop\` and retry.`,
+          );
+        }
         const result = deleteLocalProfile({
           deleteData: options.deleteData,
           profileName,
@@ -338,17 +365,41 @@ function collectOption(value: string, previous: string[] = []): string[] {
 async function cleanupProfileRuntime(input: {
   keepMcp?: boolean;
   profileName: string;
+  stopServerForDatabasePath?: string;
 }): Promise<ProfileRuntimeCleanupResult> {
   const store = createProfileStore();
   const notifications = await stopBackgroundNotificationWatcher({
     home: store.home,
     profileName: input.profileName,
   });
+  const server = input.stopServerForDatabasePath
+    ? await stopRecordedServerForDatabase(store.home, input.stopServerForDatabasePath)
+    : undefined;
   return {
     mcp: input.keepMcp ? undefined : uninstallMcpConfigs({ profileName: input.profileName }),
     notifications,
     profileName: input.profileName,
+    server,
   };
+}
+
+async function stopRecordedServerForDatabase(
+  home: string,
+  dbPath: string,
+): Promise<ProfileServerCleanupResult> {
+  const metadata = readServerMetadata(home);
+  if (!metadata) {
+    return { status: 'not_found' };
+  }
+  if (resolvePath(metadata.dbPath) !== resolvePath(dbPath)) {
+    return {
+      dbPath,
+      recordedDbPath: metadata.dbPath,
+      serverUrl: metadata.serverUrl,
+      status: 'not_matching',
+    };
+  }
+  return stopRecordedServer(home);
 }
 
 async function startSetupNotificationWatcher(input: {
@@ -578,11 +629,15 @@ function formatDeleteProfileHuman(
   }
   lines.push(...formatProfileRuntimeCleanupHuman(cleanup));
   if (result.localDatabasePath) {
-    lines.push(
-      options.deleteData
-        ? `Local data deleted: ${result.localDatabasePath}`
-        : `Local data kept: ${result.localDatabasePath}`,
-    );
+    if (options.deleteData) {
+      lines.push(
+        result.dataDeleted
+          ? `Local data deleted: ${result.localDatabasePath}`
+          : `No local data found at ${result.localDatabasePath}.`,
+      );
+    } else {
+      lines.push(`Local data kept: ${result.localDatabasePath}`);
+    }
     if (!options.deleteData) {
       lines.push('Use --delete-data to remove the local relay database too.');
     }
@@ -602,8 +657,19 @@ function formatRemoveMemberHuman(
 function formatProfileRuntimeCleanupHuman(result: ProfileRuntimeCleanupResult): string[] {
   return [
     formatNotificationStopHuman(result.notifications),
+    ...(result.server ? [formatProfileServerCleanupHuman(result.server)] : []),
     ...(result.mcp ? formatMcpUninstallHuman(result.mcp).split('\n') : ['MCP cleanup: skipped.']),
   ];
+}
+
+function formatProfileServerCleanupHuman(result: ProfileServerCleanupResult): string {
+  if (result.status === 'not_found') {
+    return 'Server: no recorded local server.';
+  }
+  if (result.status === 'not_matching') {
+    return `Server: recorded server belongs to a different local database (${result.recordedDbPath ?? 'unknown'}).`;
+  }
+  return `Server: ${formatServerStopHuman(result)}`;
 }
 
 function formatNotificationStopHuman(result: NotificationWatcherStopResult): string {
