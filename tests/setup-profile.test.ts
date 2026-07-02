@@ -1996,6 +1996,9 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       const customDbPath = join(customDir, 'relay.db');
       mkdirSync(customDir, { recursive: true });
       writeFileSync(customDbPath, '');
+      writeFileSync(`${customDbPath}-wal`, '');
+      writeFileSync(`${customDbPath}-shm`, '');
+      writeFileSync(join(customDir, 'keep-me.txt'), 'user-owned');
       store.saveProfile({ ...started.profile, localDatabasePath: customDbPath });
 
       const result = await runCli(['delete-profile', '--delete-data', '--json']);
@@ -2004,7 +2007,10 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(result.code).toBe(0);
       expect(parsed.localDatabasePath).toBe(customDbPath);
       expect(parsed.dataDeleted).toBe(true);
-      expect(existsSync(customDir)).toBe(false);
+      expect(existsSync(customDbPath)).toBe(false);
+      expect(existsSync(`${customDbPath}-wal`)).toBe(false);
+      expect(existsSync(`${customDbPath}-shm`)).toBe(false);
+      expect(readFileSync(join(customDir, 'keep-me.txt'), 'utf8')).toBe('user-owned');
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
