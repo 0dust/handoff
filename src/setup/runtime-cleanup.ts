@@ -97,7 +97,7 @@ export async function cleanupProfileRuntimeForDelete(input: {
       Boolean(input.deleteData),
     ),
   });
-  assertProfileDataDeletionCanProceed(input.profileName, cleanup, Boolean(input.deleteData));
+  assertProfileDeletionCanProceed(input.profileName, cleanup, Boolean(input.deleteData));
   return cleanup;
 }
 
@@ -139,20 +139,24 @@ function localProfileDatabasePathForCleanup(
   profile: HandoffProfile | undefined,
   deleteData: boolean,
 ): string | undefined {
-  if (!deleteData || profile?.serverMode === 'remote') {
+  if (profile?.serverMode === 'remote') {
     return undefined;
   }
-  return profile?.localDatabasePath ?? store.localDatabasePath(profileName);
+  if (profile?.localDatabasePath) return profile.localDatabasePath;
+  if (profile) return store.localDatabasePath(profileName);
+  if (deleteData) return store.localDatabasePath(profileName);
+  return undefined;
 }
 
-function assertProfileDataDeletionCanProceed(
+function assertProfileDeletionCanProceed(
   profileName: string,
   cleanup: ProfileRuntimeCleanupResult,
   deleteData: boolean,
 ): void {
-  if (!deleteData || cleanup.server?.status !== 'still_running') return;
+  if (cleanup.server?.status !== 'still_running') return;
   const pid = cleanup.server.pid ?? 'unknown';
+  const target = deleteData ? 'profile data was' : 'profile was';
   throw new Error(
-    `Recorded Handoff server for profile "${profileName}" is still running after SIGTERM (pid ${pid}); local data was not deleted. Stop it with \`npx -y handoff-relay stop\` and retry.`,
+    `Recorded Handoff server for profile "${profileName}" is still running after SIGTERM (pid ${pid}); ${target} not deleted. Stop it with \`npx -y handoff-relay stop\` and retry.`,
   );
 }

@@ -1024,6 +1024,38 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     );
   });
 
+  test('doctor accepts strict profile-backed MCP without agent-confirmed approvals', async () => {
+    const home = tempHome();
+    await startHandoffSetup({
+      env: { HANDOFF_HOME: home, USER: 'sam' },
+      lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+    });
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(
+      join(home, '.codex', 'config.toml'),
+      [
+        '[mcp_servers.handoff]',
+        'command = "npx"',
+        'args = ["-y", "handoff-relay", "server", "mcp", "--profile", "default"]',
+      ].join('\n'),
+    );
+
+    const report = await runDoctorChecks({
+      env: { HOME: home, HANDOFF_HOME: home },
+      home,
+      profileName: 'default',
+    });
+
+    expect(report.status).toBe('OK');
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: 'mcp_config',
+        message: expect.stringContaining('strict'),
+        status: 'OK',
+      }),
+    );
+  });
+
   test.each(['@0dust/handoff', 'handoff'])(
     'doctor does not accept old npm package command %s as installed MCP config',
     async (packageName) => {
@@ -1946,6 +1978,57 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         expect.objectContaining({ client: 'codex', installed: false }),
       );
     } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('CLI delete-profile stops the matching local server while keeping data by default', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    let child: ChildProcess | undefined;
+    try {
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      const dbPath = started.profile.localDatabasePath!;
+      const server = await spawnFakeHandoffServer('srv_delete_profile_keep_data_test', {
+        databaseId: databaseIdForPath(dbPath),
+      });
+      child = server.child;
+      if (!child.pid) {
+        throw new Error('Expected child pid');
+      }
+      writeServerMetadataFixture(home, {
+        dbPath,
+        pid: child.pid,
+        port: server.port,
+        serverId: server.serverId,
+        serverUrl: server.serverUrl,
+      });
+
+      const result = await runCli(['delete-profile', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.dataDeleted).toBe(false);
+      expect(parsed.cleanup.server).toMatchObject({
+        pid: child.pid,
+        status: 'stopped',
+      });
+      expect(readServerMetadata(home)).toBeUndefined();
+      expect(existsSync(dbPath)).toBe(true);
+      expect(await pidHasExited(child.pid)).toBe(true);
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (child) await killChildAndWait(child);
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
       if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;

@@ -8,6 +8,7 @@ export type McpClientId = 'claude-code' | 'codex' | 'cursor';
 export type McpSetupStatus = 'installed' | 'missing' | 'skipped';
 
 export interface McpClientConfigStatus {
+  agentApprovals: boolean;
   client: McpClientId;
   installed: boolean;
   path: string;
@@ -167,6 +168,7 @@ function configStatus(
   const present = existsSync(path);
   const contents = present ? readFileSync(path, 'utf8') : '';
   return {
+    agentApprovals: configClientProfileUsesAgentApprovals(client, contents, profileName),
     client,
     installed: configContainsClientProfileCommand(client, contents, profileName),
     path,
@@ -185,6 +187,17 @@ function configContainsClientProfileCommand(
   return jsonMcpConfigContainsProfileCommand(contents, profileName);
 }
 
+function configClientProfileUsesAgentApprovals(
+  client: McpClientId,
+  contents: string,
+  profileName: string,
+): boolean {
+  if (!configContainsClientProfileCommand(client, contents, profileName)) return false;
+  const profileConfig =
+    client === 'codex' ? (codexHandoffTable(contents) ?? '') : jsonHandoffConfig(contents);
+  return profileConfig.includes('--agent-approvals');
+}
+
 function codexConfigContainsProfileCommand(contents: string, profileName: string): boolean {
   const section = codexHandoffTable(contents);
   return section ? configContainsProfileCommand(section, profileName) : false;
@@ -201,12 +214,22 @@ function jsonMcpConfigContainsProfileCommand(contents: string, profileName: stri
   }
 }
 
+function jsonHandoffConfig(contents: string): string {
+  if (!contents.trim()) return '';
+  try {
+    const config = JSON.parse(contents) as { mcpServers?: Record<string, unknown> };
+    const handoff = config.mcpServers?.handoff;
+    return handoff ? JSON.stringify(handoff) : '';
+  } catch {
+    return '';
+  }
+}
+
 function configContainsProfileCommand(contents: string, profileName: string): boolean {
   return (
     containsHandoffPackageToken(contents) &&
     containsHandoffMcpInvocation(contents) &&
     containsProfileArgument(contents, profileName) &&
-    contents.includes('--agent-approvals') &&
     !contents.includes('--explicit-auth')
   );
 }

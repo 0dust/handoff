@@ -211,7 +211,7 @@ export async function runDoctorChecks(
   if (mcp.status === 'installed') {
     const installed = mcp.configs
       .filter((config) => config.installed)
-      .map((config) => config.client)
+      .map((config) => `${config.client} (${config.agentApprovals ? 'agent approvals' : 'strict'})`)
       .join(', ');
     checks.push(ok('mcp_config', `Handoff MCP profile config is installed for ${installed}.`));
   } else {
