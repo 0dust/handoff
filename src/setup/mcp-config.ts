@@ -336,12 +336,21 @@ function codexHandoffTableRange(contents: string): { end: number; start: number 
   let end = lines.length;
   for (let index = start + 1; index < lines.length; index += 1) {
     const trimmed = lines[index].trim();
-    if (/^\[[^\]]+\]$/.test(trimmed) && !trimmed.startsWith('[mcp_servers.handoff.')) {
+    if (isTomlTableHeader(trimmed) && !isHandoffTomlTableHeader(trimmed)) {
       end = index;
       break;
     }
   }
   return { end, start };
+}
+
+function isTomlTableHeader(trimmed: string): boolean {
+  return /^\[[^[\]]+\]$/.test(trimmed) || /^\[\[[^[\]]+\]\]$/.test(trimmed);
+}
+
+function isHandoffTomlTableHeader(trimmed: string): boolean {
+  const header = trimmed.startsWith('[[') ? trimmed.slice(2, -2) : trimmed.slice(1, -1);
+  return header === 'mcp_servers.handoff' || header.startsWith('mcp_servers.handoff.');
 }
 
 function installCommands(profileName: string): string[] {

@@ -2408,6 +2408,10 @@ describe('invite, join, LAN, and doctor setup flows', () => {
         'args = ["-y", "handoff-relay", "server", "mcp", "--explicit-auth"]',
         'startup_timeout_sec = 10',
         '',
+        '[[tools]]',
+        'name = "local-helper"',
+        'command = "keep-me"',
+        '',
         '[mcp_servers.github]',
         'command = "gh"',
       ].join('\n'),
@@ -2473,6 +2477,8 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     );
     expect(codexConfig).not.toContain('[mcp_servers.handoff]');
     expect(codexConfig).toContain('[workspace]');
+    expect(codexConfig).toContain('[[tools]]');
+    expect(codexConfig).toContain('command = "keep-me"');
     expect(codexConfig).toContain('[mcp_servers.github]');
     expect(claudeConfig.theme).toBe('dark');
     expect(claudeConfig.mcpServers.handoff).toBeUndefined();
