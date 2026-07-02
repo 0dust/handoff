@@ -664,34 +664,11 @@ function authContextProviderFromProfile(
   options: McpDefinitionOptions,
 ): McpAuthContextProvider | undefined {
   if (!options.profileStore) return undefined;
-  return () => authContextFromProfile(options);
-}
-
-function authContextFromProfile(options: McpDefinitionOptions): McpAuthContext {
-  const store = options.profileStore;
-  if (!store) {
-    throw new Error('Profile-backed MCP requires a profile store.');
-  }
-  const profileName = resolveProfileName(options.profileName);
-  const profile = store.loadProfile(profileName);
-  if (!profile) {
-    throw new Error(
-      `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay doctor\`.`,
-    );
-  }
-  const credentials = store.loadCredentials(profile.profileName);
-  const workspaceId = process.env.HANDOFF_WORKSPACE_ID ?? profile.workspaceId;
-  const authToken =
-    process.env.HANDOFF_MEMBER_TOKEN ?? process.env.AGENT_RELAY_TOKEN ?? credentials.memberToken;
-  const approvalSecret =
-    process.env.HANDOFF_APPROVAL_SECRET ??
-    process.env.AGENT_RELAY_APPROVAL_SECRET ??
-    credentials.approvalSecret;
-  return {
-    approvalSecret,
-    authToken,
-    workspaceId,
-  };
+  return () =>
+    loadProfileBackedAuthContext({
+      profileName: options.profileName,
+      profileStore: options.profileStore!,
+    });
 }
 
 function resolveAuthContext(

@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
 
 import { RelayApiClient } from '../api/client.js';
 import { RelayError } from '../errors.js';
@@ -471,7 +470,7 @@ export function deleteLocalProfile(
   const profile = store.loadProfile(profileName);
   const localDatabasePath =
     profile?.localDatabasePath ??
-    (input.deleteData ? store.localDatabasePath(profileName) : undefined);
+    (!profile && input.deleteData ? store.localDatabasePath(profileName) : undefined);
   const hadCredentials = store.credentialsExist(profileName);
   const hadPendingJoinAttempt = Boolean(store.loadPendingJoinAttempt(profileName));
 
@@ -480,9 +479,7 @@ export function deleteLocalProfile(
 
   let dataDeleted = false;
   if (input.deleteData && localDatabasePath) {
-    const dataExisted = existsSync(dirname(localDatabasePath));
-    store.deleteProfileData(profileName);
-    dataDeleted = dataExisted;
+    dataDeleted = store.deleteProfileData(profileName, { localDatabasePath }).deleted;
   }
 
   return {

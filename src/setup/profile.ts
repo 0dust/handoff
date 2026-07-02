@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type HandoffServerMode = 'lan' | 'local' | 'remote';
 export type HandoffMemberRole = 'admin' | 'member';
@@ -85,7 +85,11 @@ export class ProfileStore {
   }
 
   localDatabasePath(profileName: string): string {
-    return join(this.home, 'data', sanitizeProfileName(profileName), 'relay.db');
+    return join(this.profileDataPath(profileName), 'relay.db');
+  }
+
+  profileDataPath(profileName: string): string {
+    return join(this.home, 'data', sanitizeProfileName(profileName));
   }
 
   loadProfile(profileName: string): HandoffProfile | undefined {
@@ -137,11 +141,18 @@ export class ProfileStore {
     rmSync(this.credentialPath(profileName), { force: true });
   }
 
-  deleteProfileData(profileName: string): void {
-    rmSync(join(this.home, 'data', sanitizeProfileName(profileName)), {
+  deleteProfileData(
+    profileName: string,
+    input: { localDatabasePath?: string } = {},
+  ): { dataPath: string; deleted: boolean; localDatabasePath: string } {
+    const localDatabasePath = input.localDatabasePath ?? this.localDatabasePath(profileName);
+    const dataPath = dirname(localDatabasePath);
+    const deleted = existsSync(dataPath);
+    rmSync(dataPath, {
       force: true,
       recursive: true,
     });
+    return { dataPath, deleted, localDatabasePath };
   }
 
   credentialPermissions(profileName: string): number | undefined {

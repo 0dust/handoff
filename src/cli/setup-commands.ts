@@ -27,7 +27,12 @@ import {
   removeWorkspaceMember,
   startHandoffSetup,
 } from '../setup/orchestrator.js';
-import { createProfileStore, resolveProfileName } from '../setup/profile.js';
+import {
+  createProfileStore,
+  resolveProfileName,
+  type HandoffProfile,
+  type ProfileStore,
+} from '../setup/profile.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
 type InstallableMcpClient = McpClientId;
@@ -165,7 +170,10 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
         const store = createProfileStore();
         const profileName = resolveProfileName(options.profile);
         const existingProfile = store.loadProfile(profileName);
-        const stopped = await stopRecordedServer(store.home);
+        const stopped = await stopRecordedServerForDatabase(
+          store.home,
+          requireLocalProfileDatabasePath(store, profileName, existingProfile),
+        );
         const result = await startHandoffSetup({
           host: options.host,
           lan: options.lan ?? existingProfile?.serverMode === 'lan',
@@ -277,9 +285,12 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
         const profile = store.loadProfile(profileName);
         const cleanup = await cleanupProfileRuntime({
           keepMcp: options.keepMcp,
-          stopServerForDatabasePath: options.deleteData
-            ? (profile?.localDatabasePath ?? store.localDatabasePath(profileName))
-            : undefined,
+          stopServerForDatabasePath: localProfileDatabasePathForCleanup(
+            store,
+            profileName,
+            profile,
+            Boolean(options.deleteData),
+          ),
           profileName,
         });
         if (options.deleteData && cleanup.server?.status === 'still_running') {
@@ -402,6 +413,31 @@ async function stopRecordedServerForDatabase(
   return stopRecordedServer(home);
 }
 
+function requireLocalProfileDatabasePath(
+  store: ProfileStore,
+  profileName: string,
+  profile: HandoffProfile | undefined,
+): string {
+  if (profile?.serverMode === 'remote') {
+    throw new Error(
+      `Profile "${profile.profileName}" is joined to a remote Handoff server. Use a new --profile name to host a local workspace.`,
+    );
+  }
+  return profile?.localDatabasePath ?? store.localDatabasePath(profileName);
+}
+
+function localProfileDatabasePathForCleanup(
+  store: ProfileStore,
+  profileName: string,
+  profile: HandoffProfile | undefined,
+  deleteData: boolean,
+): string | undefined {
+  if (!deleteData || profile?.serverMode === 'remote') {
+    return undefined;
+  }
+  return profile?.localDatabasePath ?? store.localDatabasePath(profileName);
+}
+
 async function startSetupNotificationWatcher(input: {
   profileName: string;
   startNotificationWatcher: StartNotificationWatcher;
@@ -431,7 +467,7 @@ async function startSetupNotificationWatcher(input: {
 
 function restartOutput(
   result: Awaited<ReturnType<typeof startHandoffSetup>>,
-  stopped: StopRecordedServerResult,
+  stopped: ProfileServerCleanupResult,
   notifications: SetupNotificationWatcherResult,
 ) {
   return {
@@ -505,7 +541,7 @@ function formatStartHuman(
 
 function formatRestartHuman(
   result: Awaited<ReturnType<typeof startHandoffSetup>>,
-  stopped: StopRecordedServerResult,
+  stopped: ProfileServerCleanupResult,
   notifications: SetupNotificationWatcherResult,
 ): string {
   const lines = [
@@ -515,7 +551,7 @@ function formatRestartHuman(
     `Workspace: ${result.profile.workspaceName}`,
     `Server: ${result.profile.serverUrl}`,
     `Server status: ${result.server.status}`,
-    `Previous server: ${formatServerStopHuman(stopped)}`,
+    `Previous server: ${formatProfileServerCleanupStatus(stopped)}`,
   ];
   if (result.profile.publicInviteBaseUrl) {
     lines.push(`Invite URL: ${result.profile.publicInviteBaseUrl}`);
@@ -657,19 +693,19 @@ function formatRemoveMemberHuman(
 function formatProfileRuntimeCleanupHuman(result: ProfileRuntimeCleanupResult): string[] {
   return [
     formatNotificationStopHuman(result.notifications),
-    ...(result.server ? [formatProfileServerCleanupHuman(result.server)] : []),
+    ...(result.server ? [`Server: ${formatProfileServerCleanupStatus(result.server)}`] : []),
     ...(result.mcp ? formatMcpUninstallHuman(result.mcp).split('\n') : ['MCP cleanup: skipped.']),
   ];
 }
 
-function formatProfileServerCleanupHuman(result: ProfileServerCleanupResult): string {
+function formatProfileServerCleanupStatus(result: ProfileServerCleanupResult): string {
   if (result.status === 'not_found') {
-    return 'Server: no recorded local server.';
+    return 'no recorded local server.';
   }
   if (result.status === 'not_matching') {
-    return `Server: recorded server belongs to a different local database (${result.recordedDbPath ?? 'unknown'}).`;
+    return `recorded server belongs to a different local database (${result.recordedDbPath ?? 'unknown'}).`;
   }
-  return `Server: ${formatServerStopHuman(result)}`;
+  return formatServerStopHuman(result);
 }
 
 function formatNotificationStopHuman(result: NotificationWatcherStopResult): string {

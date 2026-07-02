@@ -1800,6 +1800,92 @@ describe('invite, join, LAN, and doctor setup flows', () => {
     }
   });
 
+  test('CLI restart does not stop a recorded server for a different profile database', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_TEST_SKIP_SERVER = '1';
+    try {
+      const defaultSetup = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      await startHandoffSetup({
+        env: { HANDOFF_HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+        profileName: 'other',
+      });
+      writeServerMetadataFixture(home, {
+        dbPath: defaultSetup.profile.localDatabasePath,
+        serverUrl: 'http://127.0.0.1:39337',
+      });
+
+      const { result } = await runCliWithImplicitWatcher([
+        'restart',
+        '--profile',
+        'other',
+        '--json',
+      ]);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.stopped).toMatchObject({
+        recordedDbPath: defaultSetup.profile.localDatabasePath,
+        status: 'not_matching',
+      });
+      expect(readServerMetadata(home)?.dbPath).toBe(defaultSetup.profile.localDatabasePath);
+    } finally {
+      delete process.env.HANDOFF_TEST_SKIP_SERVER;
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
+  test('CLI restart rejects a remote profile before stopping any recorded local server', async () => {
+    const home = tempHome();
+    const previous = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const store = createProfileStore({ home });
+      store.saveProfile({
+        schemaVersion: 1,
+        profileName: 'default',
+        workspaceId: 'workspace_remote',
+        workspaceName: 'Remote Workspace',
+        memberId: 'member_remote',
+        handle: 'alice',
+        displayName: 'Alice',
+        role: 'member',
+        serverUrl: 'https://handoff.example.test',
+        serverMode: 'remote',
+        createdAt: new Date().toISOString(),
+        lastVerifiedAt: new Date().toISOString(),
+      });
+      store.saveCredentials('default', {
+        memberToken: 'relay_member_remote',
+        approvalSecret: 'relay_approval_secret_remote',
+        createdAt: new Date().toISOString(),
+      });
+      writeServerMetadataFixture(home, { dbPath: store.localDatabasePath('host') });
+
+      const result = await runCli(['restart', '--json']);
+      const parsed = JSON.parse(result.stderr);
+
+      expect(result.code).toBe(1);
+      expect(parsed.error.message).toContain('joined to a remote Handoff server');
+      expect(readServerMetadata(home)?.dbPath).toBe(store.localDatabasePath('host'));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HANDOFF_HOME;
+      } else {
+        process.env.HANDOFF_HOME = previous;
+      }
+    }
+  });
+
   test('CLI uninstall-mcp removes the selected client and preserves other clients', async () => {
     const home = tempHome();
     const previous = process.env.HOME;
@@ -1886,6 +1972,39 @@ describe('invite, join, LAN, and doctor setup flows', () => {
       expect(parsed.dataDeleted).toBe(true);
       expect(parsed.localDatabasePath).toBe(started.profile.localDatabasePath);
       expect(existsSync(started.profile.localDatabasePath!)).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousHandoffHome === undefined) delete process.env.HANDOFF_HOME;
+      else process.env.HANDOFF_HOME = previousHandoffHome;
+    }
+  });
+
+  test('CLI delete-profile --delete-data deletes the custom database target it reports', async () => {
+    const home = tempHome();
+    const previousHome = process.env.HOME;
+    const previousHandoffHome = process.env.HANDOFF_HOME;
+    process.env.HOME = home;
+    process.env.HANDOFF_HOME = home;
+    try {
+      const started = await startHandoffSetup({
+        env: { HANDOFF_HOME: home, HOME: home, USER: 'sam' },
+        lifecycle: { ensureServer: async () => ({ status: 'skipped', serverUrl: 'local-db' }) },
+      });
+      const store = createProfileStore({ home });
+      const customDir = join(home, 'custom-data', 'default');
+      const customDbPath = join(customDir, 'relay.db');
+      mkdirSync(customDir, { recursive: true });
+      writeFileSync(customDbPath, '');
+      store.saveProfile({ ...started.profile, localDatabasePath: customDbPath });
+
+      const result = await runCli(['delete-profile', '--delete-data', '--json']);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(parsed.localDatabasePath).toBe(customDbPath);
+      expect(parsed.dataDeleted).toBe(true);
+      expect(existsSync(customDir)).toBe(false);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
