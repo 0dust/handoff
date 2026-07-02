@@ -921,11 +921,18 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
         return;
       }
       const auth = createAuthContext(options);
+      const backgroundMode = process.env.HANDOFF_WATCH_BACKGROUND === '1';
+      const reportWatcherError = (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        io.writeErr(`[handoff] notification watcher tick failed: ${message}\n`);
+      };
       const notify = createNotificationDispatcher({
         writeTerminal: (message) => io.writeErr(`${message}\n`),
         desktop: options.desktopNotifications !== false,
         webhookUrl: options.webhookUrl,
         webhookHeaders: parseWebhookHeaders(options.webhookHeader),
+        requireOutOfBandDelivery:
+          backgroundMode && (options.desktopNotifications !== false || Boolean(options.webhookUrl)),
         onError: (error, channel) => {
           io.writeErr(`[handoff] ${channel} notification failed: ${error.message}\n`);
         },
@@ -946,8 +953,16 @@ export function buildCliProgram(io: CliIo = defaultIo, options: CliProgramOption
         },
         notify,
         intervalMs: Number(options.interval),
+        onError: reportWatcherError,
       });
-      await watcher.tick();
+      try {
+        await watcher.tick();
+      } catch (error) {
+        if (!backgroundMode) {
+          throw error;
+        }
+        reportWatcherError(error);
+      }
       if (options.once) {
         closeBackend(auth.backend);
         return;

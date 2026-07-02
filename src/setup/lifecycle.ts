@@ -273,7 +273,7 @@ async function inspectReusableHandoffServer(options: {
   }
   if (!health.database_id) {
     throw new Error(
-      `${options.sourceDescription} already has a Handoff server, but this version cannot verify its database. Run \`npx -y handoff-relay server stop\`, restart stale Handoff processes, or pass --port <free-port>.`,
+      `${options.sourceDescription} already has a Handoff server, but this version cannot verify its database. Run \`npx -y handoff-relay stop\`, restart stale Handoff processes, or pass --port <free-port>.`,
     );
   }
   if (health.database_id !== options.expectedDatabaseId) {

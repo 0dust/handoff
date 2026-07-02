@@ -112,7 +112,7 @@ function formatServerStatusHuman(result: Awaited<ReturnType<typeof serverStatusO
   return lines.join('\n');
 }
 
-function formatServerStopHuman(result: StopRecordedServerResult): string {
+export function formatServerStopHuman(result: StopRecordedServerResult): string {
   if (result.status === 'not_found') {
     return 'No Handoff background server is recorded.';
   }

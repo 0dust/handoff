@@ -5,10 +5,11 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type HandoffServerMode = 'lan' | 'local' | 'remote';
 export type HandoffMemberRole = 'admin' | 'member';
@@ -85,7 +86,11 @@ export class ProfileStore {
   }
 
   localDatabasePath(profileName: string): string {
-    return join(this.home, 'data', sanitizeProfileName(profileName), 'relay.db');
+    return join(this.profileDataPath(profileName), 'relay.db');
+  }
+
+  profileDataPath(profileName: string): string {
+    return join(this.home, 'data', sanitizeProfileName(profileName));
   }
 
   loadProfile(profileName: string): HandoffProfile | undefined {
@@ -135,6 +140,42 @@ export class ProfileStore {
   deleteProfile(profileName: string): void {
     rmSync(this.profilePath(profileName), { force: true });
     rmSync(this.credentialPath(profileName), { force: true });
+  }
+
+  deleteProfileData(
+    profileName: string,
+    input: { localDatabasePath?: string } = {},
+  ): {
+    dataPath: string;
+    deleted: boolean;
+    deletionMode: 'custom_database_files' | 'profile_data_directory';
+    localDatabasePath: string;
+  } {
+    const standardDatabasePath = this.localDatabasePath(profileName);
+    const localDatabasePath = input.localDatabasePath ?? this.localDatabasePath(profileName);
+    const standardDataPath = this.profileDataPath(profileName);
+    const isStandardPath = localDatabasePath === standardDatabasePath;
+    if (!isStandardPath) {
+      const deleted = deleteDatabaseFiles(localDatabasePath);
+      return {
+        dataPath: dirname(localDatabasePath),
+        deleted,
+        deletionMode: 'custom_database_files',
+        localDatabasePath,
+      };
+    }
+    const dataPath = standardDataPath;
+    const deleted = existsSync(dataPath);
+    rmSync(dataPath, {
+      force: true,
+      recursive: true,
+    });
+    return {
+      dataPath,
+      deleted,
+      deletionMode: 'profile_data_directory',
+      localDatabasePath,
+    };
   }
 
   credentialPermissions(profileName: string): number | undefined {
@@ -228,6 +269,21 @@ export function redactProfile(profile: HandoffProfile): Record<string, unknown> 
     createdAt: profile.createdAt,
     lastVerifiedAt: profile.lastVerifiedAt,
   };
+}
+
+function deleteDatabaseFiles(localDatabasePath: string): boolean {
+  let deleted = false;
+  for (const path of [
+    localDatabasePath,
+    `${localDatabasePath}-wal`,
+    `${localDatabasePath}-shm`,
+    `${localDatabasePath}-journal`,
+  ]) {
+    if (!existsSync(path)) continue;
+    unlinkSync(path);
+    deleted = true;
+  }
+  return deleted;
 }
 
 function safeUserName(): string | undefined {

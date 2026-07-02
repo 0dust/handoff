@@ -1,24 +1,39 @@
 import type { Command } from 'commander';
 
+import { formatServerStopHuman } from './server-commands.js';
 import { formatDoctorHuman, runDoctorChecks } from '../setup/doctor.js';
 import {
   startBackgroundNotificationWatcher,
   type BackgroundNotificationWatcherMetadata,
 } from '../notification-watch-lifecycle.js';
-import type { McpClientId } from '../setup/mcp-config.js';
+import { stopRecordedServer } from '../setup/lifecycle.js';
+import {
+  uninstallMcpConfigs,
+  type McpClientId,
+  type McpUninstallSummary,
+} from '../setup/mcp-config.js';
 import {
   createInviteForProfile,
+  deleteLocalProfile,
   joinInvite,
   leaveWorkspaceProfile,
   removeWorkspaceMember,
   startHandoffSetup,
 } from '../setup/orchestrator.js';
-import { createProfileStore } from '../setup/profile.js';
+import {
+  cleanupProfileRuntime,
+  cleanupProfileRuntimeForDelete,
+  prepareProfileRestart,
+  type ProfileRuntimeCleanupResult,
+  type ProfileServerCleanupResult,
+} from '../setup/runtime-cleanup.js';
+import { createProfileStore, resolveProfileName } from '../setup/profile.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
 type InstallableMcpClient = McpClientId;
 type StartNotificationWatcher = typeof startBackgroundNotificationWatcher;
 type NotificationWatcherStartResult = Awaited<ReturnType<StartNotificationWatcher>>;
+type NotificationWatcherStopResult = ProfileRuntimeCleanupResult['notifications'];
 
 export interface SetupCommandOptions {
   io: CliIo;
@@ -105,6 +120,56 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
     );
 
   program
+    .command('stop')
+    .description('Stop the local Handoff background server started by start')
+    .option('--json', 'Print JSON output')
+    .action(async (options: CommonOptions) => {
+      const result = await stopRecordedServer(createProfileStore().home);
+      write(io, options.json ? result : formatServerStopHuman(result), options.json);
+    });
+
+  program
+    .command('restart')
+    .description('Restart the local Handoff background server for a profile')
+    .option('--lan', 'Restart with LAN-reachable invite links')
+    .option('--profile <name>', 'Profile name')
+    .option('--host <host>', 'Server bind host')
+    .option('--port <port>', 'Server port')
+    .option('--public-url <url>', 'Public invite base URL')
+    .option('--json', 'Print JSON output')
+    .action(
+      async (
+        options: CommonOptions & {
+          host?: string;
+          lan?: boolean;
+          port?: string;
+          publicUrl?: string;
+        },
+      ) => {
+        const profileName = resolveProfileName(options.profile);
+        const { profile: existingProfile, stopped } = await prepareProfileRestart({ profileName });
+        const result = await startHandoffSetup({
+          host: options.host,
+          lan: options.lan ?? existingProfile?.serverMode === 'lan',
+          port: options.port ? Number(options.port) : undefined,
+          profileName,
+          publicUrl: options.publicUrl ?? existingProfile?.publicInviteBaseUrl,
+        });
+        const notifications = await startSetupNotificationWatcher({
+          profileName: result.profile.profileName,
+          startNotificationWatcher,
+        });
+        write(
+          io,
+          options.json
+            ? restartOutput(result, stopped, notifications)
+            : formatRestartHuman(result, stopped, notifications),
+          options.json,
+        );
+      },
+    );
+
+  program
     .command('invite')
     .description('Invite a teammate with the active Handoff profile')
     .argument('<handle>', '@handle to invite')
@@ -158,11 +223,72 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
   program
     .command('leave')
     .description('Leave the active Handoff workspace and remove local profile credentials')
+    .option('--keep-mcp', 'Keep local MCP client config entries')
     .option('--profile <name>', 'Profile name')
     .option('--json', 'Print JSON output')
-    .action(async (options: CommonOptions) => {
-      const result = await leaveWorkspaceProfile({ profileName: options.profile });
-      write(io, options.json ? result : formatLeaveHuman(result), options.json);
+    .action(async (options: CommonOptions & { keepMcp?: boolean }) => {
+      const profileName = resolveProfileName(options.profile);
+      const result = await leaveWorkspaceProfile({ profileName });
+      const cleanup = await cleanupProfileRuntime({
+        keepMcp: options.keepMcp,
+        profileName,
+      });
+      write(
+        io,
+        options.json ? { ...result, cleanup } : formatLeaveHuman(result, cleanup),
+        options.json,
+      );
+    });
+
+  program
+    .command('delete-profile')
+    .description('Delete a local Handoff profile, credentials, watcher, and MCP config')
+    .option('--profile <name>', 'Profile name')
+    .option('--keep-mcp', 'Keep local MCP client config entries')
+    .option('--delete-data', 'Also delete the local relay database for this profile')
+    .option('--json', 'Print JSON output')
+    .action(
+      async (
+        options: CommonOptions & {
+          deleteData?: boolean;
+          keepMcp?: boolean;
+        },
+      ) => {
+        const profileName = resolveProfileName(options.profile);
+        const cleanup = await cleanupProfileRuntimeForDelete({
+          deleteData: options.deleteData,
+          keepMcp: options.keepMcp,
+          profileName,
+        });
+        const result = deleteLocalProfile({
+          deleteData: options.deleteData,
+          profileName,
+        });
+        write(
+          io,
+          options.json
+            ? { ...result, cleanup }
+            : formatDeleteProfileHuman(result, cleanup, {
+                deleteData: Boolean(options.deleteData),
+              }),
+          options.json,
+        );
+      },
+    );
+
+  program
+    .command('uninstall-mcp')
+    .description('Remove Handoff MCP config from Codex, Claude Code, Cursor, or all')
+    .option('--client <client>', 'codex, claude, cursor, or all', 'all')
+    .option('--profile <name>', 'Profile name')
+    .option('--json', 'Print JSON output')
+    .action(async (options: CommonOptions & { client?: string }) => {
+      const profileName = resolveProfileName(options.profile);
+      const result = uninstallMcpConfigs({
+        clients: parseMcpClientSelector(options.client),
+        profileName,
+      });
+      write(io, options.json ? result : formatMcpUninstallHuman(result), options.json);
     });
 
   program
@@ -197,6 +323,13 @@ function parseInstallMcpClient(value: string | undefined): InstallableMcpClient 
   );
 }
 
+function parseMcpClientSelector(value: string | undefined): McpClientId[] | undefined {
+  if (!value || value === 'all') return undefined;
+  if (value === 'codex' || value === 'cursor') return [value];
+  if (value === 'claude' || value === 'claude-code') return ['claude-code'];
+  throw new Error('Unsupported MCP client. Use --client all, codex, claude, or cursor.');
+}
+
 function collectOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -226,6 +359,24 @@ async function startSetupNotificationWatcher(input: {
       status: 'failed',
     };
   }
+}
+
+function restartOutput(
+  result: Awaited<ReturnType<typeof startHandoffSetup>>,
+  stopped: ProfileServerCleanupResult,
+  notifications: SetupNotificationWatcherResult,
+) {
+  return {
+    stopped,
+    profile: result.profile.profileName,
+    handle: result.profile.handle,
+    workspaceName: result.profile.workspaceName,
+    serverUrl: result.profile.serverUrl,
+    publicInviteBaseUrl: result.profile.publicInviteBaseUrl,
+    serverStatus: result.server.status,
+    notifications,
+    warning: result.server.warning,
+  };
 }
 
 function startOutput(
@@ -281,6 +432,30 @@ function formatStartHuman(
   } else {
     lines.push('', 'Next:', result.nextCommand);
   }
+  return lines.join('\n');
+}
+
+function formatRestartHuman(
+  result: Awaited<ReturnType<typeof startHandoffSetup>>,
+  stopped: ProfileServerCleanupResult,
+  notifications: SetupNotificationWatcherResult,
+): string {
+  const lines = [
+    result.created ? 'Handoff started with a new profile.' : 'Handoff restarted.',
+    `Profile: ${result.profile.profileName}`,
+    `Handle: @${result.profile.handle}`,
+    `Workspace: ${result.profile.workspaceName}`,
+    `Server: ${result.profile.serverUrl}`,
+    `Server status: ${result.server.status}`,
+    `Previous server: ${formatProfileServerCleanupStatus(stopped)}`,
+  ];
+  if (result.profile.publicInviteBaseUrl) {
+    lines.push(`Invite URL: ${result.profile.publicInviteBaseUrl}`);
+  }
+  if (result.server.warning) {
+    lines.push(`Warning: ${result.server.warning}`);
+  }
+  lines.push('', ...formatNotificationSetupHuman(notifications));
   return lines.join('\n');
 }
 
@@ -351,14 +526,55 @@ function formatNotificationSetupHuman(result: SetupNotificationWatcherResult): s
   ];
 }
 
-function formatLeaveHuman(result: Awaited<ReturnType<typeof leaveWorkspaceProfile>>): string {
+function formatLeaveHuman(
+  result: Awaited<ReturnType<typeof leaveWorkspaceProfile>>,
+  cleanup: ProfileRuntimeCleanupResult,
+): string {
   if (!result.hadProfile) {
-    return `No active Handoff profile named "${result.profileName}". Nothing to leave.`;
+    return [
+      `No active Handoff profile named "${result.profileName}". Nothing to leave.`,
+      ...formatProfileRuntimeCleanupHuman(cleanup),
+    ].join('\n');
   }
   return [
     `Left Handoff workspace ${result.workspaceName} as @${result.handle}.`,
     `Removed local profile credentials for "${result.profileName}".`,
+    ...formatProfileRuntimeCleanupHuman(cleanup),
   ].join('\n');
+}
+
+function formatDeleteProfileHuman(
+  result: ReturnType<typeof deleteLocalProfile>,
+  cleanup: ProfileRuntimeCleanupResult,
+  options: { deleteData: boolean },
+): string {
+  const removedLocalFiles =
+    result.hadProfile || result.hadCredentials || result.hadPendingJoinAttempt;
+  const lines = removedLocalFiles
+    ? [`Deleted local Handoff profile "${result.profileName}".`]
+    : [`No local Handoff profile named "${result.profileName}".`];
+  if (result.workspaceName && result.handle) {
+    lines.push(`Former workspace: ${result.workspaceName} as @${result.handle}`);
+    lines.push(
+      'Local only: workspace membership was not revoked. Use `handoff leave` when the workspace is reachable.',
+    );
+  }
+  lines.push(...formatProfileRuntimeCleanupHuman(cleanup));
+  if (result.localDatabasePath) {
+    if (options.deleteData) {
+      lines.push(
+        result.dataDeleted
+          ? `Local data deleted: ${result.localDatabasePath}`
+          : `No local data found at ${result.localDatabasePath}.`,
+      );
+    } else {
+      lines.push(`Local data kept: ${result.localDatabasePath}`);
+    }
+    if (!options.deleteData) {
+      lines.push('Use --delete-data to remove the local relay database too.');
+    }
+  }
+  return lines.join('\n');
 }
 
 function formatRemoveMemberHuman(
@@ -368,6 +584,55 @@ function formatRemoveMemberHuman(
     return `@${result.handle} is already removed from ${result.workspaceName}.`;
   }
   return `Removed @${result.handle} from ${result.workspaceName}.`;
+}
+
+function formatProfileRuntimeCleanupHuman(result: ProfileRuntimeCleanupResult): string[] {
+  return [
+    formatNotificationStopHuman(result.notifications),
+    ...(result.server ? [`Server: ${formatProfileServerCleanupStatus(result.server)}`] : []),
+    ...(result.mcp ? formatMcpUninstallHuman(result.mcp).split('\n') : ['MCP cleanup: skipped.']),
+  ];
+}
+
+function formatProfileServerCleanupStatus(result: ProfileServerCleanupResult): string {
+  if (result.status === 'not_found') {
+    return 'no recorded local server.';
+  }
+  if (result.status === 'not_matching') {
+    return `recorded server belongs to a different local database (${result.recordedDbPath ?? 'unknown'}).`;
+  }
+  return formatServerStopHuman(result);
+}
+
+function formatNotificationStopHuman(result: NotificationWatcherStopResult): string {
+  if (result.status === 'not_found') {
+    return 'Notifications: no background watcher recorded.';
+  }
+  if (result.status === 'not_running') {
+    return 'Notifications: watcher was not running; removed stale metadata.';
+  }
+  if (result.status === 'still_running') {
+    return `Notifications: watcher is still running after SIGTERM (pid ${result.metadata?.pid ?? 'unknown'}).`;
+  }
+  return `Notifications: stopped watcher (pid ${result.metadata?.pid ?? 'unknown'}).`;
+}
+
+function formatMcpUninstallHuman(result: McpUninstallSummary): string {
+  const removed = result.configs.filter((config) => config.removed);
+  const unchanged = result.configs.filter((config) => !config.removed);
+  const lines = [`MCP cleanup for profile "${result.profileName}":`];
+  if (removed.length) {
+    lines.push(`Removed: ${removed.map((config) => config.client).join(', ')}`);
+    for (const config of removed) {
+      lines.push(`- ${config.client}: ${config.path}`);
+    }
+  } else {
+    lines.push('Removed: none.');
+  }
+  if (unchanged.length) {
+    lines.push(`No Handoff entry: ${unchanged.map((config) => config.client).join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 function formatMcpSetupHuman(

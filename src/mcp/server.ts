@@ -17,7 +17,14 @@ import type { RelayPacket } from '../protocol/schema.js';
 import { runtimeVersion } from '../runtime/version.js';
 import { RelayService, type ApprovalAction } from '../service/relay-service.js';
 import { createBackendForProfile } from '../setup/orchestrator.js';
-import { createProfileStore, resolveProfileName, type ProfileStore } from '../setup/profile.js';
+import {
+  createProfileStore,
+  resolveProfileName,
+  type HandoffCredentials,
+  type HandoffEnv,
+  type HandoffProfile,
+  type ProfileStore,
+} from '../setup/profile.js';
 import { createRelayDatabase } from '../storage/database.js';
 
 export interface McpToolDefinition {
@@ -57,7 +64,7 @@ const clarificationRequestMcpInputShape = {
   ...clarificationRequestInputShape,
 } as const;
 
-type RelayBackend = RelayService | RelayApiClient;
+export type RelayBackend = RelayService | RelayApiClient;
 
 export interface McpAuthContext {
   approvalSecret?: string;
@@ -65,12 +72,21 @@ export interface McpAuthContext {
   workspaceId: string;
 }
 
+export type McpAuthContextProvider = McpAuthContext | (() => McpAuthContext);
+
 export interface McpDefinitionOptions {
   agentApprovals?: boolean;
-  authContext?: McpAuthContext;
+  authContext?: McpAuthContextProvider;
   explicitAuth?: boolean;
   profileName?: string;
   profileStore?: ProfileStore;
+}
+
+export interface ProfileBackedMcpInput {
+  env?: HandoffEnv;
+  profileName?: string;
+  profileStore: ProfileStore;
+  serverUrl?: string;
 }
 
 function asToolResult(value: unknown) {
@@ -118,14 +134,16 @@ export function getMcpToolDefinitions(
   service: RelayBackend,
   options: McpDefinitionOptions = {},
 ): McpToolDefinition[] {
-  const authContext = options.authContext ?? authContextFromProfile(options);
+  const authContextProvider = options.authContext ?? authContextProviderFromProfile(options);
+  const initialAuthContext = authContextProvider
+    ? resolveAuthContext(authContextProvider)
+    : undefined;
   const agentApprovals = Boolean(options.agentApprovals);
-  if (agentApprovals && (options.explicitAuth || !authContext?.approvalSecret)) {
+  if (agentApprovals && (options.explicitAuth || !initialAuthContext?.approvalSecret)) {
     throw new Error(
       'Agent-confirmed approvals require profile-backed MCP with a profile approval secret.',
     );
   }
-  const agentApprovalSecret = agentApprovals ? authContext?.approvalSecret : undefined;
   const approvalTokenInput = agentApprovals ? z.string().optional() : z.string();
   const approveInputSchema: Record<string, z.ZodTypeAny> = {
     authToken: z.string(),
@@ -150,7 +168,7 @@ export function getMcpToolDefinitions(
         return result.packet.packet_type === 'reply' ? 'reply' : 'send';
       },
       args,
-      approvalSecret: agentApprovalSecret,
+      approvalSecret: resolveAgentApprovalSecret(agentApprovals, authContextProvider),
       service,
       useAgentApprovals: agentApprovals,
     });
@@ -303,7 +321,7 @@ export function getMcpToolDefinitions(
         const approvalToken = await resolveMcpApprovalToken({
           action: 'hydrate',
           args,
-          approvalSecret: agentApprovalSecret,
+          approvalSecret: resolveAgentApprovalSecret(agentApprovals, authContextProvider),
           service,
           useAgentApprovals: agentApprovals,
         });
@@ -357,7 +375,7 @@ export function getMcpToolDefinitions(
         const approvalToken = await resolveMcpApprovalToken({
           action: 'hydrate',
           args,
-          approvalSecret: agentApprovalSecret,
+          approvalSecret: resolveAgentApprovalSecret(agentApprovals, authContextProvider),
           service,
           useAgentApprovals: agentApprovals,
         });
@@ -447,18 +465,20 @@ export function getMcpToolDefinitions(
       handler: async (args) => service.listAuditReceipts(args),
     },
   ];
-  if (options.explicitAuth || !authContext) {
+  if (options.explicitAuth || !authContextProvider) {
     return tools;
   }
   return tools.map((tool) => ({
     ...tool,
     inputSchema: omitInjectedAuth(tool.inputSchema),
-    handler: async (args) =>
-      tool.handler({
+    handler: async (args) => {
+      const authContext = resolveAuthContext(authContextProvider)!;
+      return tool.handler({
         ...args,
         authToken: authContext.authToken,
         workspaceId: authContext.workspaceId,
-      }),
+      });
+    },
   }));
 }
 
@@ -494,52 +514,25 @@ export async function startMcpServer(input: {
       `No Handoff profile named "${resolveProfileName(input.profileName)}". Run \`npx -y handoff-relay doctor\`.`,
     );
   }
-  const storedCredentials = storedProfile
-    ? profileStore?.loadCredentials(storedProfile.profileName)
-    : undefined;
-  const profile = storedProfile
-    ? {
-        ...storedProfile,
-        workspaceId: process.env.HANDOFF_WORKSPACE_ID ?? storedProfile.workspaceId,
-        serverUrl:
-          input.serverUrl ??
-          process.env.HANDOFF_SERVER_URL ??
-          process.env.AGENT_RELAY_SERVER_URL ??
-          storedProfile.serverUrl,
-        localDatabasePath:
-          process.env.HANDOFF_DB ?? process.env.AGENT_RELAY_DB ?? storedProfile.localDatabasePath,
-      }
-    : undefined;
-  const credentials = storedCredentials
-    ? {
-        ...storedCredentials,
-        memberToken:
-          process.env.HANDOFF_MEMBER_TOKEN ??
-          process.env.AGENT_RELAY_TOKEN ??
-          storedCredentials.memberToken,
-        approvalSecret:
-          process.env.HANDOFF_APPROVAL_SECRET ??
-          process.env.AGENT_RELAY_APPROVAL_SECRET ??
-          storedCredentials.approvalSecret,
-      }
-    : undefined;
-  const service =
-    profile && credentials
-      ? createBackendForProfile({ profile, credentials })
-      : input.serverUrl
-        ? new RelayApiClient({ serverUrl: input.serverUrl })
-        : new RelayService(createRelayDatabase(input.dbPath));
+  const profileContext =
+    storedProfile && profileStore
+      ? {
+          profileName: storedProfile.profileName,
+          profileStore,
+          serverUrl: input.serverUrl,
+        }
+      : undefined;
+  const service = profileContext
+    ? createProfileBackedMcpBackend(profileContext)
+    : input.serverUrl
+      ? new RelayApiClient({ serverUrl: input.serverUrl })
+      : new RelayService(createRelayDatabase(input.dbPath));
   const server = createMcpServer(service, {
     agentApprovals: input.agentApprovals,
-    authContext:
-      profile && credentials
-        ? {
-            approvalSecret: credentials.approvalSecret,
-            authToken: credentials.memberToken,
-            workspaceId: profile.workspaceId,
-          }
-        : undefined,
-    explicitAuth: input.explicitAuth || !profile,
+    authContext: profileContext
+      ? createProfileBackedMcpAuthContextProvider(profileContext)
+      : undefined,
+    explicitAuth: input.explicitAuth || !profileContext,
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -551,29 +544,144 @@ function omitInjectedAuth(inputSchema: Record<string, z.ZodTypeAny>): Record<str
   return rest;
 }
 
-function authContextFromProfile(options: McpDefinitionOptions): McpAuthContext | undefined {
-  const store = options.profileStore;
-  if (!store) return undefined;
-  const profileName = resolveProfileName(options.profileName);
-  const profile = store.loadProfile(profileName);
-  if (!profile) {
+export function createProfileBackedMcpBackend(input: ProfileBackedMcpInput): RelayBackend {
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        if (typeof property !== 'string') return undefined;
+        return (...args: any[]) => {
+          const { backend } = loadProfileBackedMcpContext(input);
+          const method = (backend as any)[property];
+          if (typeof method !== 'function') {
+            closeRelayBackend(backend);
+            return method;
+          }
+          try {
+            const result = method.apply(backend, args);
+            if (result && typeof result.then === 'function') {
+              return result.finally(() => closeRelayBackend(backend));
+            }
+            closeRelayBackend(backend);
+            return result;
+          } catch (error) {
+            closeRelayBackend(backend);
+            throw error;
+          }
+        };
+      },
+    },
+  ) as RelayBackend;
+}
+
+export function createProfileBackedMcpAuthContextProvider(
+  input: ProfileBackedMcpInput,
+): () => McpAuthContext {
+  return () => loadProfileBackedAuthContext(input);
+}
+
+function loadProfileBackedMcpContext(input: ProfileBackedMcpInput): {
+  authContext: McpAuthContext;
+  backend: RelayBackend;
+} {
+  const { authContext, credentials, profile } = loadProfileBackedState(input);
+  return {
+    authContext,
+    backend: createBackendForProfile({ profile, credentials }),
+  };
+}
+
+function loadProfileBackedAuthContext(input: ProfileBackedMcpInput): McpAuthContext {
+  return loadProfileBackedState(input).authContext;
+}
+
+function loadProfileBackedState(input: ProfileBackedMcpInput): {
+  authContext: McpAuthContext;
+  credentials: HandoffCredentials;
+  profile: HandoffProfile;
+} {
+  const profileName = resolveProfileName(input.profileName);
+  const storedProfile = input.profileStore.loadProfile(profileName);
+  if (!storedProfile) {
     throw new Error(
       `No Handoff profile named "${profileName}". Run \`npx -y handoff-relay doctor\`.`,
     );
   }
-  const credentials = store.loadCredentials(profile.profileName);
-  const workspaceId = process.env.HANDOFF_WORKSPACE_ID ?? profile.workspaceId;
-  const authToken =
-    process.env.HANDOFF_MEMBER_TOKEN ?? process.env.AGENT_RELAY_TOKEN ?? credentials.memberToken;
-  const approvalSecret =
-    process.env.HANDOFF_APPROVAL_SECRET ??
-    process.env.AGENT_RELAY_APPROVAL_SECRET ??
-    credentials.approvalSecret;
-  return {
-    approvalSecret,
-    authToken,
-    workspaceId,
+  const storedCredentials = input.profileStore.loadCredentials(storedProfile.profileName);
+  const profile = {
+    ...storedProfile,
+    workspaceId:
+      input.env?.HANDOFF_WORKSPACE_ID ??
+      process.env.HANDOFF_WORKSPACE_ID ??
+      storedProfile.workspaceId,
+    serverUrl:
+      input.serverUrl ??
+      input.env?.HANDOFF_SERVER_URL ??
+      process.env.HANDOFF_SERVER_URL ??
+      input.env?.AGENT_RELAY_SERVER_URL ??
+      process.env.AGENT_RELAY_SERVER_URL ??
+      storedProfile.serverUrl,
+    localDatabasePath:
+      input.env?.HANDOFF_DB ??
+      process.env.HANDOFF_DB ??
+      input.env?.AGENT_RELAY_DB ??
+      process.env.AGENT_RELAY_DB ??
+      storedProfile.localDatabasePath,
   };
+  const credentials = {
+    ...storedCredentials,
+    memberToken:
+      input.env?.HANDOFF_MEMBER_TOKEN ??
+      process.env.HANDOFF_MEMBER_TOKEN ??
+      input.env?.AGENT_RELAY_TOKEN ??
+      process.env.AGENT_RELAY_TOKEN ??
+      storedCredentials.memberToken,
+    approvalSecret:
+      input.env?.HANDOFF_APPROVAL_SECRET ??
+      process.env.HANDOFF_APPROVAL_SECRET ??
+      input.env?.AGENT_RELAY_APPROVAL_SECRET ??
+      process.env.AGENT_RELAY_APPROVAL_SECRET ??
+      storedCredentials.approvalSecret,
+  };
+  return {
+    authContext: {
+      approvalSecret: credentials.approvalSecret,
+      authToken: credentials.memberToken,
+      workspaceId: profile.workspaceId,
+    },
+    credentials,
+    profile,
+  };
+}
+
+function closeRelayBackend(backend: RelayBackend): void {
+  if (backend instanceof RelayService) {
+    backend.close();
+  }
+}
+
+function authContextProviderFromProfile(
+  options: McpDefinitionOptions,
+): McpAuthContextProvider | undefined {
+  if (!options.profileStore) return undefined;
+  return () =>
+    loadProfileBackedAuthContext({
+      profileName: options.profileName,
+      profileStore: options.profileStore!,
+    });
+}
+
+function resolveAuthContext(
+  provider: McpAuthContextProvider | undefined,
+): McpAuthContext | undefined {
+  return typeof provider === 'function' ? provider() : provider;
+}
+
+function resolveAgentApprovalSecret(
+  agentApprovals: boolean,
+  provider: McpAuthContextProvider | undefined,
+): string | undefined {
+  return agentApprovals ? resolveAuthContext(provider)?.approvalSecret : undefined;
 }
 
 async function resolveMcpApprovalToken(input: {
