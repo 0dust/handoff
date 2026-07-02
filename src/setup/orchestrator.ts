@@ -469,7 +469,7 @@ export function deleteLocalProfile(
   const profileName = resolveProfileName(input.profileName, env);
   const profile = store.loadProfile(profileName);
   const localDatabasePath =
-    profile?.localDatabasePath ??
+    (profile?.serverMode === 'remote' ? undefined : profile?.localDatabasePath) ??
     (!profile && input.deleteData ? store.localDatabasePath(profileName) : undefined);
   const hadCredentials = store.credentialsExist(profileName);
   const hadPendingJoinAttempt = Boolean(store.loadPendingJoinAttempt(profileName));

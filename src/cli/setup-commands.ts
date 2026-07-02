@@ -1,19 +1,12 @@
-import { resolve as resolvePath } from 'node:path';
-
 import type { Command } from 'commander';
 
 import { formatServerStopHuman } from './server-commands.js';
 import { formatDoctorHuman, runDoctorChecks } from '../setup/doctor.js';
 import {
   startBackgroundNotificationWatcher,
-  stopBackgroundNotificationWatcher,
   type BackgroundNotificationWatcherMetadata,
 } from '../notification-watch-lifecycle.js';
-import {
-  readServerMetadata,
-  stopRecordedServer,
-  type StopRecordedServerResult,
-} from '../setup/lifecycle.js';
+import { stopRecordedServer } from '../setup/lifecycle.js';
 import {
   uninstallMcpConfigs,
   type McpClientId,
@@ -28,17 +21,19 @@ import {
   startHandoffSetup,
 } from '../setup/orchestrator.js';
 import {
-  createProfileStore,
-  resolveProfileName,
-  type HandoffProfile,
-  type ProfileStore,
-} from '../setup/profile.js';
+  cleanupProfileRuntime,
+  cleanupProfileRuntimeForDelete,
+  prepareProfileRestart,
+  type ProfileRuntimeCleanupResult,
+  type ProfileServerCleanupResult,
+} from '../setup/runtime-cleanup.js';
+import { createProfileStore, resolveProfileName } from '../setup/profile.js';
 import { write, type CliIo, type CommonOptions } from './shared.js';
 
 type InstallableMcpClient = McpClientId;
 type StartNotificationWatcher = typeof startBackgroundNotificationWatcher;
 type NotificationWatcherStartResult = Awaited<ReturnType<StartNotificationWatcher>>;
-type NotificationWatcherStopResult = Awaited<ReturnType<typeof stopBackgroundNotificationWatcher>>;
+type NotificationWatcherStopResult = ProfileRuntimeCleanupResult['notifications'];
 
 export interface SetupCommandOptions {
   io: CliIo;
@@ -51,22 +46,6 @@ interface SetupNotificationWatcherResult {
   profileName: string;
   status: NotificationWatcherStartResult['status'] | 'failed';
 }
-
-interface ProfileRuntimeCleanupResult {
-  mcp?: McpUninstallSummary;
-  notifications: NotificationWatcherStopResult;
-  profileName: string;
-  server?: ProfileServerCleanupResult;
-}
-
-type ProfileServerCleanupResult =
-  | StopRecordedServerResult
-  | {
-      dbPath?: string;
-      recordedDbPath?: string;
-      serverUrl?: string;
-      status: 'not_matching';
-    };
 
 export function registerSetupCommands(program: Command, input: SetupCommandOptions): void {
   const { io, startNotificationWatcher = startBackgroundNotificationWatcher } = input;
@@ -167,13 +146,8 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
           publicUrl?: string;
         },
       ) => {
-        const store = createProfileStore();
         const profileName = resolveProfileName(options.profile);
-        const existingProfile = store.loadProfile(profileName);
-        const stopped = await stopRecordedServerForDatabase(
-          store.home,
-          requireLocalProfileDatabasePath(store, profileName, existingProfile),
-        );
+        const { profile: existingProfile, stopped } = await prepareProfileRestart({ profileName });
         const result = await startHandoffSetup({
           host: options.host,
           lan: options.lan ?? existingProfile?.serverMode === 'lan',
@@ -281,24 +255,11 @@ export function registerSetupCommands(program: Command, input: SetupCommandOptio
         },
       ) => {
         const profileName = resolveProfileName(options.profile);
-        const store = createProfileStore();
-        const profile = store.loadProfile(profileName);
-        const cleanup = await cleanupProfileRuntime({
+        const cleanup = await cleanupProfileRuntimeForDelete({
+          deleteData: options.deleteData,
           keepMcp: options.keepMcp,
-          stopServerForDatabasePath: localProfileDatabasePathForCleanup(
-            store,
-            profileName,
-            profile,
-            Boolean(options.deleteData),
-          ),
           profileName,
         });
-        if (options.deleteData && cleanup.server?.status === 'still_running') {
-          const pid = cleanup.server.pid ?? 'unknown';
-          throw new Error(
-            `Recorded Handoff server for profile "${profileName}" is still running after SIGTERM (pid ${pid}); local data was not deleted. Stop it with \`npx -y handoff-relay stop\` and retry.`,
-          );
-        }
         const result = deleteLocalProfile({
           deleteData: options.deleteData,
           profileName,
@@ -371,71 +332,6 @@ function parseMcpClientSelector(value: string | undefined): McpClientId[] | unde
 
 function collectOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
-}
-
-async function cleanupProfileRuntime(input: {
-  keepMcp?: boolean;
-  profileName: string;
-  stopServerForDatabasePath?: string;
-}): Promise<ProfileRuntimeCleanupResult> {
-  const store = createProfileStore();
-  const notifications = await stopBackgroundNotificationWatcher({
-    home: store.home,
-    profileName: input.profileName,
-  });
-  const server = input.stopServerForDatabasePath
-    ? await stopRecordedServerForDatabase(store.home, input.stopServerForDatabasePath)
-    : undefined;
-  return {
-    mcp: input.keepMcp ? undefined : uninstallMcpConfigs({ profileName: input.profileName }),
-    notifications,
-    profileName: input.profileName,
-    server,
-  };
-}
-
-async function stopRecordedServerForDatabase(
-  home: string,
-  dbPath: string,
-): Promise<ProfileServerCleanupResult> {
-  const metadata = readServerMetadata(home);
-  if (!metadata) {
-    return { status: 'not_found' };
-  }
-  if (resolvePath(metadata.dbPath) !== resolvePath(dbPath)) {
-    return {
-      dbPath,
-      recordedDbPath: metadata.dbPath,
-      serverUrl: metadata.serverUrl,
-      status: 'not_matching',
-    };
-  }
-  return stopRecordedServer(home);
-}
-
-function requireLocalProfileDatabasePath(
-  store: ProfileStore,
-  profileName: string,
-  profile: HandoffProfile | undefined,
-): string {
-  if (profile?.serverMode === 'remote') {
-    throw new Error(
-      `Profile "${profile.profileName}" is joined to a remote Handoff server. Use a new --profile name to host a local workspace.`,
-    );
-  }
-  return profile?.localDatabasePath ?? store.localDatabasePath(profileName);
-}
-
-function localProfileDatabasePathForCleanup(
-  store: ProfileStore,
-  profileName: string,
-  profile: HandoffProfile | undefined,
-  deleteData: boolean,
-): string | undefined {
-  if (!deleteData || profile?.serverMode === 'remote') {
-    return undefined;
-  }
-  return profile?.localDatabasePath ?? store.localDatabasePath(profileName);
 }
 
 async function startSetupNotificationWatcher(input: {
